@@ -1254,3 +1254,40 @@ def test_the_keyword_override_is_visible_as_itself():
     top = result["candidates"][0]
     assert top["exact_keyword"] is True
     assert top["score"] == 92.0
+
+
+# --- provenance -----------------------------------------------------------
+def test_an_answer_carries_the_document_it_came_from():
+    """"Where did the agent get that from" is a compliance question in
+    insurance, not a nicety. The citation is never spoken — it travels to the
+    call record and the escalation ticket so a human can check the agent
+    against the source instead of taking its word."""
+    call_id = new_call()
+    result = tool(call_id, "search_knowledge_base", query="what are your office hours")
+
+    assert result["source"] == "claims-handbook-2026-v3 §1.1"
+    assert result["owner"] == "claims-ops"
+    # Per-entry length budget, rather than one blanket rule for a four-channel
+    # list and a one-line answer alike.
+    assert "Keep it to 2 sentence(s) at most" in result["instruction"]
+
+    # It reaches the handoff, and the post-call record.
+    handoff = tool(call_id, "escalate_to_human", reason="caller_request")["handoff_context"]
+    assert handoff["kb_consulted"] == ["Office hours (claims-handbook-2026-v3 §1.1)"]
+
+    end_call(call_id, "Caller asked about opening hours.")
+    assert repository().interactions[call_id].kb_consulted == (
+        "Office hours (claims-handbook-2026-v3 §1.1)")
+
+
+def test_every_entry_has_provenance_and_is_in_review():
+    """Office hours and addresses go stale, and nothing about a stale fact
+    looks broken — it retrieves perfectly and is simply wrong. This is the
+    only check in the project that fails on the passage of time."""
+    import sys
+    sys.path.insert(0, "scripts")
+    from check_kb import stale_entries
+
+    assert stale_entries() == []
+    # And it actually fires: every entry is overdue against a far-future date.
+    assert len(stale_entries(today="2099-01-01")) == 11

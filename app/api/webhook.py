@@ -157,6 +157,7 @@ def _handle_end_of_call(call_id: str, message: dict[str, Any]) -> Any:
         ),
         caller_phone=(session.claimed_phone if session else "") or payloads.caller_number(message),
         callback_number=(session.callback_number if session else ""),
+        kb_consulted="; ".join(session.kb_consulted) if session else "",
         summary=summary,
         sentiment=payloads.sentiment_from(analysis, structured),
         intent=", ".join(session.intents) if session and session.intents

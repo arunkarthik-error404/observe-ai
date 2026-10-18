@@ -120,6 +120,11 @@ def build_message(context: dict[str, Any], transfer: str) -> dict[str, Any]:
         footer += f" · {attempts} failed ID attempt(s)"
     # Visible rather than silent: the notes were written to fit the code the
     # agent reported, so a human reading a corrected ticket needs to know.
+    # What the agent quoted, and from which document. A human picking this up
+    # after a knowledge-base answer needs to know what the caller was already
+    # told, and be able to check it against the source rather than the summary.
+    if context.get("kb_consulted"):
+        footer += f" · quoted: {', '.join(context['kb_consulted'])}"
     if context.get("reason_reported"):
         footer += f" · agent reported: {context['reason_reported'].replace('_', ' ')}"
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": footer}]})

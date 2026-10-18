@@ -48,11 +48,26 @@ MIN_MARGIN = 8.0
 # reaches the voice — the claim record and the document channels do it too.
 
 
+# Per-entry metadata, parsed off the lines between the heading and the body.
+# Anything not on this list stays body text, so a stray colon in a sentence is
+# not silently swallowed as a field.
+META_KEYS = {"owner", "source", "reviewed", "review_by", "voice_max_sentences"}
+
+
 @dataclass
 class KBEntry:
     title: str
     keywords: list[str]
     answer: str
+    owner: str = ""
+    # The document this came from. Never spoken — it goes to the call record,
+    # so a human reviewing an escalation can check what the agent read from.
+    source: str = ""
+    reviewed: str = ""
+    review_by: str = ""
+    # How long this is allowed to be out loud. One entry ran to twenty-three
+    # seconds on a live call, which is the prompt asking nicely; this is data.
+    voice_max_sentences: int = 3
 
     @property
     def haystack(self) -> str:
@@ -67,15 +82,27 @@ def entries() -> list[KBEntry]:
         lines = block.strip().splitlines()
         title = lines[0].strip()
         keywords: list[str] = []
+        meta: dict[str, str] = {}
         body: list[str] = []
         for line in lines[1:]:
-            if line.lower().startswith("keywords:"):
-                keywords = [k.strip() for k in line.split(":", 1)[1].split(",") if k.strip()]
+            key, _, value = line.partition(":")
+            key = key.strip().lower()
+            if key == "keywords":
+                keywords = [k.strip() for k in value.split(",") if k.strip()]
+            elif key in META_KEYS and not body:
+                # `not body`: metadata only counts before the prose starts, so
+                # a colon inside a sentence stays part of the answer.
+                meta[key] = value.strip()
             else:
                 body.append(line)
         answer = " ".join(" ".join(body).split())
         if answer:
-            out.append(KBEntry(title=title, keywords=keywords, answer=answer))
+            out.append(KBEntry(
+                title=title, keywords=keywords, answer=answer,
+                owner=meta.get("owner", ""), source=meta.get("source", ""),
+                reviewed=meta.get("reviewed", ""), review_by=meta.get("review_by", ""),
+                voice_max_sentences=int(meta.get("voice_max_sentences") or 3),
+            ))
     return out
 
 
@@ -165,6 +192,11 @@ def search(query: str, top_k: int = 3) -> dict:
         "answer": speakable(best.answer),
         "score": round(float(best_score), 1),
         "candidates": candidates,
+        # Never spoken. It rides back to the post-call record and the
+        # escalation ticket, so a human reviewing a call can check the agent
+        # against the document it read from rather than taking its word.
+        "source": best.source,
+        "owner": best.owner,
         # The third branch, added after a live call fell through the gap between
         # the other two. `MIN_SCORE` only filters *weak* matches; it does nothing
         # about a confident match on the wrong entry. "How to add a photo to an
@@ -185,8 +217,11 @@ def search(query: str, top_k: int = 3) -> dict:
             # A caller who wanted the quickest way to send a photo had to sit
             # through a fax number and a P.O. box to get it.
             "Then cut it down. If the answer lists several options, give the best one or two and "
-            "say there are others if they would rather — do not read the whole list. Two or three "
-            "sentences, then stop and let them ask. The text is what you may say, not a script you "
-            "have to finish."
+            "say there are others if they would rather — do not read the whole list. "
+            # Per entry rather than a blanket "two or three": a four-channel
+            # list and a one-line deductible answer do not deserve the same
+            # budget, and the prompt had no way to tell them apart.
+            f"Keep it to {best.voice_max_sentences} sentence(s) at most, then stop and let them "
+            "ask. The text is what you may say, not a script you have to finish."
         ),
     }

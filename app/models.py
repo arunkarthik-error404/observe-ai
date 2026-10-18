@@ -214,6 +214,10 @@ class InteractionRecord(BaseModel):
     # only where a human agreed to ring back. Matching a record on an
     # unverified callback number could attach a call to the wrong customer.
     callback_number: str = ""
+    # Knowledge-base entries the agent quoted, with their source document.
+    # Never spoken to the caller; it is here so a reviewer can check what
+    # the agent said against the document it said it from.
+    kb_consulted: str = ""
     summary: str = ""
     sentiment: str = "neutral"
     intent: str = ""

@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 from statistics import mean
 
@@ -50,12 +51,31 @@ from kb_fixtures import (  # noqa: E402
     STT_NOISE,
 )
 
-from app.knowledge import MIN_SCORE, search  # noqa: E402
+from app.knowledge import MIN_SCORE, entries, search  # noqa: E402
 
 BASELINE_PATH = Path(__file__).parent / "kb_baseline.json"
 # How far a metric may drift before it counts as a regression. Content edits
 # move these by a point or two; a real regression moves them further.
 TOLERANCE = 0.02
+
+
+def stale_entries(today: str | None = None) -> list[str]:
+    """Entries past their review date, and entries with no provenance at all.
+
+    Office hours and mailing addresses change. An agent reading a two-year-old
+    address confidently is worse than one that refuses, and nothing about a
+    stale fact looks broken — it retrieves perfectly and is simply wrong. This
+    is the only check in the project that fails on the passage of time.
+    """
+    now = today or date.today().isoformat()
+    problems = []
+    for entry in entries():
+        if not entry.source or not entry.review_by:
+            problems.append(f"{entry.title}: no source/review_by")
+        elif entry.review_by < now:
+            problems.append(f"{entry.title}: review overdue since {entry.review_by}"
+                            f" (owner: {entry.owner or 'unassigned'})")
+    return problems
 
 
 def rank_of(query: str, expected: str) -> tuple[int, dict]:
@@ -202,6 +222,10 @@ def main() -> int:
     current = collect()
     render(current, args.verbose)
 
+    stale = stale_entries()
+    for problem in stale:
+        print(f"  STALE  {problem}")
+
     clean = {"min_score": current["min_score"],
              "sets": [{k: v for k, v in s.items() if not k.startswith("_")}
                       for s in current["sets"]]}
@@ -219,11 +243,13 @@ def main() -> int:
     # A leak is a failure on its own terms, baseline or not: there is no
     # tolerance band for answering something this line must not answer.
     leaks = sum(len(b.get("_leaks", [])) for b in current["sets"])
-    if regressions or leaks:
+    if regressions or leaks or stale:
         for line in regressions:
             print(f"  REGRESSION  {line}")
         if leaks:
             print(f"  {leaks} leak(s) — see above")
+        if stale:
+            print(f"  {len(stale)} entr(ies) need review")
         return 1
     print("no regression against baseline")
     return 0

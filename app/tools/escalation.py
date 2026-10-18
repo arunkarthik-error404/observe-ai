@@ -141,6 +141,10 @@ def escalate_to_human(session: CallSession, args: dict[str, Any]) -> dict[str, A
         "customer_name": session.customer.full_name if session.customer else "unverified",
         "policy_id": session.customer.policy_id if session.customer else "",
         "claims_discussed": session.claims_discussed,
+        # What the agent quoted at this caller, and from which document. If a
+        # handoff follows a knowledge-base answer, the human needs to know
+        # what they were already told and be able to check it.
+        "kb_consulted": session.kb_consulted,
         "auth_attempts": session.auth_attempts,
         "topics": session.intents,
         # One click to the caller's record, rather than the receiving agent

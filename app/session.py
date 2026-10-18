@@ -55,6 +55,10 @@ class CallSession:
     # conversation outcome
     intents: list[str] = field(default_factory=list)
     claims_discussed: list[str] = field(default_factory=list)
+    # Knowledge-base entries the agent read from, with their source document.
+    # Never spoken; it travels to the escalation ticket and the call record so
+    # a human can check the agent against what it was quoting.
+    kb_consulted: list[str] = field(default_factory=list)
     escalated: bool = False
     escalation_reason: str = ""
     ticket_id: str = ""
@@ -105,6 +109,7 @@ class CallSession:
             "attempts_remaining": self.attempts_remaining,
             "intents": self.intents,
             "claims_discussed": self.claims_discussed,
+            "kb_consulted": self.kb_consulted,
             "escalated": self.escalated,
             "escalation_reason": self.escalation_reason,
             "ticket_id": self.ticket_id,
