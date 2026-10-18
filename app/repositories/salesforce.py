@@ -279,6 +279,13 @@ def _description(record: InteractionRecord) -> str:
     detail.
     """
     parts = [record.summary.strip()] if record.summary.strip() else []
+    if record.callback_number:
+        # Second, because it is the one line in here someone has to act on.
+        # It goes in the text rather than a custom field because it is not the
+        # account number and must never be what a contact is matched on — and
+        # a number that exists only inside the transcript is a callback nobody
+        # makes.
+        parts.append(f"Call back on: {record.callback_number}")
     if record.transcript.strip():
         parts.append("--- Transcript ---\n" + record.transcript.strip())
     text = "\n\n".join(parts)

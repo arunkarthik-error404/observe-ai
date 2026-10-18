@@ -44,7 +44,8 @@ EMAIL = re.compile(r"\b[\w.+%-]+@[\w-]+\.[\w.-]+\b")
 
 # Field names whose *value* is sensitive regardless of its shape.
 PHONE_KEYS = {"phone", "caller_phone", "phone_number", "claimed_phone",
-              "from_number", "to_number", "support_phone", "transfer_phone_number"}
+              "callback_number", "from_number", "to_number", "support_phone",
+              "transfer_phone_number"}
 NAME_KEYS = {"name", "caller_name", "customer_name", "full_name", "preferred_name"}
 DOB_KEYS = {"date_of_birth", "dob", "birthdate", "birth_date"}
 EMAIL_KEYS = {"email", "email_address"}

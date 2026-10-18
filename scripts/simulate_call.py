@@ -56,6 +56,10 @@ SCENARIOS: dict[str, list[Step]] = {
         ("search_knowledge_base", {"query": "how do I start a new claim"}),
         ("search_knowledge_base", {"query": "what are your office hours"}),
         ("escalate_to_human", {"reason": "customer_not_found", "notes": "No account for 5559998888."}),
+        # The caller who cannot be matched to an account is the one with no
+        # number on file, so this replay is the one that has to prove the
+        # callback has somewhere to land.
+        ("record_callback_number", {"callback_number": "807-259-3908"}),
     ],
     "escalation": [
         ("lookup_customer", {"phone_number": "555-693-6678"}),

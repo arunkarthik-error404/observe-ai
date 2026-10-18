@@ -1,4 +1,4 @@
-"""Knowledge-base retrieval (bonus requirement).
+"""Knowledge-base retrieval.
 
 Deliberately lexical, not vector-based: the corpus is ~12 entries, so
 rapidfuzz token-set scoring answers in under a millisecond, adds no network
@@ -59,7 +59,15 @@ def entries() -> list[KBEntry]:
 def search(query: str, top_k: int = 3) -> dict:
     q = (query or "").strip().lower()
     if not q:
-        return {"found": False, "reason": "empty_query", "candidates": []}
+        return {
+            "found": False,
+            "reason": "empty_query",
+            "candidates": [],
+            "instruction": (
+                "No question was passed. Ask the caller to say again what they want to know, then "
+                "call this tool with their words. Do not answer from your own knowledge."
+            ),
+        }
 
     scored = []
     for entry in entries():
@@ -85,8 +93,11 @@ def search(query: str, top_k: int = 3) -> dict:
             "best_score": round(float(best_score), 1),
             "candidates": candidates,
             "instruction": (
-                "Do not guess. Tell the caller you are not certain about that one and "
-                "offer either a representative or a callback."
+                "Nothing in the knowledge base answers that. Do not guess, and do not answer it "
+                "from your own knowledge even if you are certain you know it — this tool is the "
+                "only approved source for a fact you state out loud. Tell the caller it is not "
+                "something you can confirm on this line, and offer either a representative or a "
+                "callback."
             ),
         }
     return {

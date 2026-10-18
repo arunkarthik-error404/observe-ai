@@ -1,13 +1,14 @@
 """Scenario tests driven through the real Vapi webhook payload shape.
 
-These exist so the four interview scenarios can be rehearsed and regression-
-checked in under a second, without spending voice minutes or relying on the
-STT layer hearing a date of birth correctly. Any change to prompts or tools
-gets validated here first; the live call is the last mile, not the test loop.
+These exist so every scenario can be rehearsed and regression-checked in under
+a second, without spending voice minutes or relying on the STT layer hearing a
+date of birth correctly. Any change to prompts or tools gets validated here
+first; the live call is the last mile, not the test loop.
 """
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
@@ -205,6 +206,33 @@ def test_kb_refuses_to_guess_out_of_scope_questions():
     assert result["reason"] == "no_confident_match"
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "who is the president of the united states",
+        "who is the prime minister of the united states",
+        "what is the capital of france",
+    ],
+)
+def test_a_general_knowledge_question_is_refused_not_answered(question):
+    """A live call answered this from the model's own weights — "As of October
+    2023, the President of the United States is Joe Biden" — on a branded
+    insurance line. The refusal threshold is the defence, so the instruction it
+    returns has to close off answering from memory, not just guessing."""
+    result = tool(new_call(), "search_knowledge_base", query=question)
+    assert result["found"] is False
+    instruction = result["instruction"].lower()
+    assert "from your own knowledge" in instruction
+    assert "representative" in instruction
+
+
+def test_an_empty_query_still_tells_the_agent_what_to_do():
+    result = tool(new_call(), "search_knowledge_base", query="")
+    assert result["found"] is False
+    assert result["reason"] == "empty_query"
+    assert "own knowledge" in result["instruction"]
+
+
 # --- safety ---------------------------------------------------------------
 def test_explicit_emergency_tool():
     call_id = new_call()
@@ -230,7 +258,9 @@ def test_upstream_failure_degrades_gracefully():
     repo.fail_next = 3  # fail every attempt of the next lookup
     result = tool(new_call(), "lookup_customer", phone_number="555-234-1187")
     assert result["error"] == "system_unavailable"
-    assert "representative" in result["instruction"]
+    instruction = result["instruction"]
+    assert "someone can help" in instruction          # a human is still offered
+    assert "not that you will connect or transfer" in instruction
 
 
 def test_duplicate_end_of_call_report_is_idempotent():
@@ -297,6 +327,147 @@ def test_escalation_only_promises_a_live_transfer_when_one_is_configured(monkeyp
         config.settings.cache_clear()
 
 
+# --- the callback number -------------------------------------------------
+# A live call promised "a representative will call you back on this number" to
+# a caller who had no caller ID and could not remember the number on their
+# policy. They read one out, the agent thanked them for it, and it reached no
+# field a human could act on — only the transcript.
+def test_a_callback_with_no_number_tells_the_agent_to_ask_for_one(monkeypatch):
+    from app import config
+
+    config.settings.cache_clear()
+    monkeypatch.setenv("BUSINESS_HOURS_MODE", "closed")
+    try:
+        result = tool(new_call(), "escalate_to_human", reason="customer_not_found")
+        assert result["transfer"] == "callback"
+        assert result["callback_number"] == ""
+        instruction = result["instruction"].lower()
+        assert "record_callback_number" in instruction
+        assert "do not end the call" in instruction
+    finally:
+        monkeypatch.delenv("BUSINESS_HOURS_MODE", raising=False)
+        config.settings.cache_clear()
+
+
+def test_the_callback_number_reaches_the_handoff_and_the_record():
+    call_id = new_call()
+    escalation = tool(call_id, "escalate_to_human", reason="customer_not_found")
+    ticket = escalation["ticket_id"]
+
+    recorded = tool(call_id, "record_callback_number", callback_number="(807) 259-3908")
+    assert recorded["ok"] is True
+    assert recorded["callback_number"] == "8072593908"
+    assert recorded["ticket_id"] == ticket  # attached to the open handoff
+
+    end_call(call_id, "Caller could not be identified; a callback was arranged.")
+    written = repository().interactions[call_id]
+    assert written.callback_number == "8072593908"
+    # Never the field a CRM matches a contact on: the number is unverified and
+    # may not be the one on the policy.
+    assert written.caller_phone == ""
+
+
+def test_a_callback_number_short_of_ten_digits_is_read_back_not_saved():
+    call_id = new_call()
+    result = tool(call_id, "record_callback_number", callback_number="807 259")
+    assert result["error"] == "invalid_phone"
+    assert result["digits_heard"] == 6
+    assert store.peek(call_id).callback_number == ""
+
+
+def test_a_volunteered_number_is_captured_by_the_escalation_itself():
+    call_id = new_call()
+    escalation = tool(call_id, "escalate_to_human", reason="caller_request",
+                      callback_number="807-259-3908")
+    assert escalation["handoff_context"]["callback_number"] == "8072593908"
+
+
+def test_no_tool_asks_the_model_for_its_own_goodbye():
+    """Vapi's endCallMessage is the only sign-off. A live call heard two:
+    "Thank you for calling Observe Insurance. Have a great day! Goodbye!" and
+    then "Thanks for calling Observe Insurance. Take care." — because this
+    tool's instruction asked for one on top of the configured one."""
+    result = tool(new_call(), "log_interaction", summary="Done.", sentiment="neutral")
+    instruction = result["instruction"]
+    assert "Do not say goodbye" in instruction
+    assert "then say goodbye" not in instruction
+
+
+def test_no_tool_offers_a_connection_it_cannot_make():
+    """Only `escalate_to_human` knows whether this is a live transfer or a
+    callback tomorrow. A live call had triage say "I can connect you to a rep"
+    and the escalation agent walk it back seconds later, because the team was
+    closed. Any tool that offers a human before that is decided has to offer
+    the help, not the mechanism."""
+    call_id = new_call()
+    missed = tool(call_id, "lookup_customer", phone_number="555-999-8888")
+    assert missed["found"] is False
+    assert "someone can help" in missed["instruction"]
+    assert "transferred to a representative" not in missed["instruction"]
+
+
+# --- the escalation reason code ------------------------------------------
+def test_customer_not_found_is_corrected_when_nothing_was_looked_up():
+    """A live call escalated `customer_not_found` for a caller who could not
+    remember their number. Nothing was ever searched, so nothing was missing —
+    a different problem with a different fix, and it skews every count built
+    on the reason field."""
+    call_id = new_call()
+    escalation = tool(call_id, "escalate_to_human", reason="customer_not_found",
+                      notes="Cannot remember the number on the account.")
+    context = escalation["handoff_context"]
+    assert context["reason"] == "no_identifier_given"
+    # The correction is visible, not silent: the notes were written to fit the
+    # code the agent reported.
+    assert context["reason_reported"] == "customer_not_found"
+    assert store.peek(call_id).escalation_reason == "no_identifier_given"
+
+
+def test_customer_not_found_stands_when_a_lookup_really_missed():
+    call_id = new_call()
+    missed = tool(call_id, "lookup_customer", phone_number="555-999-8888")
+    assert missed["found"] is False
+
+    context = tool(call_id, "escalate_to_human",
+                   reason="customer_not_found")["handoff_context"]
+    assert context["reason"] == "customer_not_found"
+    assert context["reason_reported"] == ""
+
+
+def test_an_unverified_account_holder_is_not_reported_as_not_found():
+    """The account exists; identity was simply never confirmed."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-234-1187")
+    context = tool(call_id, "escalate_to_human",
+                   reason="customer_not_found")["handoff_context"]
+    assert context["reason"] == "verification_incomplete"
+
+
+def test_authentication_failed_needs_the_attempts_to_back_it_up():
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-234-1187")
+    context = tool(call_id, "escalate_to_human",
+                   reason="authentication_failed")["handoff_context"]
+    assert context["reason"] == "verification_incomplete"
+
+    locked = new_call()
+    tool(locked, "lookup_customer", phone_number="555-418-4492")
+    for _ in range(3):
+        tool(locked, "verify_identity", date_of_birth="1965-02-27")
+    held = tool(locked, "escalate_to_human",
+                reason="authentication_failed")["handoff_context"]
+    assert held["reason"] == "authentication_failed"
+    assert held["reason_reported"] == ""
+
+
+def test_a_reason_only_the_model_witnessed_is_taken_at_its_word():
+    """`distressed_caller` is not checkable server-side, so it is not checked."""
+    context = tool(new_call(), "escalate_to_human",
+                   reason="distressed_caller")["handoff_context"]
+    assert context["reason"] == "distressed_caller"
+    assert context["reason_reported"] == ""
+
+
 def test_a_call_that_never_carried_audio_is_not_logged():
     call_id = new_call()
     response = client.post("/vapi/webhook", json={"message": {
@@ -317,6 +488,79 @@ def test_a_real_call_is_still_logged_without_a_summary():
         "type": "end-of-call-report", "call": {"id": call_id}, "analysis": {},
     }})
     assert call_id in repository().interactions
+
+
+def wait_for_record(call_id: str, timeout: float = 2.0):
+    """`log_interaction` writes on a worker thread so a caller never waits on it."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        record = repository().interactions.get(call_id)
+        if record is not None:
+            return record
+        time.sleep(0.01)
+    raise AssertionError(f"no interaction record was written for {call_id}")
+
+
+def test_the_end_of_call_report_cannot_downgrade_a_logged_outcome():
+    """A live call logged `callback_scheduled`, then got relabelled `pending`.
+
+    Vapi's squad-mode structuredData carried no outcome field, so the webhook
+    fell through to the session's auth state — and because the Salesforce
+    subject is derived from the outcome and sent on every write, the second,
+    poorer write won.
+    """
+    call_id = new_call()
+    tool(call_id, "escalate_to_human", reason="customer_not_found")
+    tool(call_id, "log_interaction", summary="Callback arranged.", sentiment="neutral",
+         outcome="callback_scheduled")
+    assert wait_for_record(call_id).outcome == "callback_scheduled"
+
+    client.post("/vapi/webhook", json={"message": {
+        "type": "end-of-call-report",
+        "call": {"id": call_id},
+        # Vapi's own default schema: a summary and a sentiment, no outcome.
+        "analysis": {"summary": "Caller could not be identified.",
+                     "structuredData": {"sentiment": "neutral"}},
+    }})
+    assert repository().interactions[call_id].outcome == "callback_scheduled"
+
+
+def test_pending_auth_is_never_written_as_an_outcome():
+    """`pending` is where a session starts, not how a call ended."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-234-1187")
+    end_call(call_id, "Caller hung up during verification.")
+    assert repository().interactions[call_id].outcome == ""
+
+
+def test_intent_falls_back_to_vapis_own_structured_fields():
+    """The call with no server tool at all is the one with the least other
+    information about it, and the intent field landed empty on exactly those."""
+    call_id = new_call()
+    client.post("/vapi/webhook", json={"message": {
+        "type": "end-of-call-report",
+        "call": {"id": call_id},
+        "analysis": {
+            "summary": "Caller asked a general question.",
+            # Vapi's squad-mode default schema: no `intent` key anywhere.
+            "structuredData": {"call_type": "Claims Support",
+                               "issue_type": "Claim Status Inquiry"},
+        },
+    }})
+    # The specific key wins over the generic one, in the session's own format.
+    assert repository().interactions[call_id].intent == "claim_status_inquiry"
+
+
+def test_the_session_still_outranks_the_providers_extraction():
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-234-1187")
+    client.post("/vapi/webhook", json={"message": {
+        "type": "end-of-call-report",
+        "call": {"id": call_id},
+        "analysis": {"summary": "Caller checked a claim.",
+                     "structuredData": {"call_type": "Claims Support"}},
+    }})
+    assert repository().interactions[call_id].intent == "authentication"
 
 
 def test_outcome_falls_back_to_vapis_own_structured_field():

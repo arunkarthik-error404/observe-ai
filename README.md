@@ -22,7 +22,7 @@ when it should, and writes the call back to the customer's record.
         ┌─────────┼──────────────┬────────────────┬──────────────┐
         ▼         ▼              ▼                ▼              ▼
    SessionStore  tools/       knowledge/      repositories/   notifications/
-   (auth state,  (8 tools,    (FAQ retrieval  ├─ salesforce ◀── Integration #1 (read)
+   (auth state,  (9 tools,    (FAQ retrieval  ├─ salesforce ◀── Integration #1 (read)
     attempts,     gated by     + refusal      │                 Integration #2 (write)
     timeline)     the server)  threshold)     ├─ sheets       Slack ◀── Integration #3
                                               └─ memory  ◀── tests & offline dev
@@ -36,16 +36,16 @@ when it should, and writes the call back to the customer's record.
 | **Auth failure** | DOB mismatch ×3 | no claim data at any point, server-side lock-out, hand to escalation |
 | **Customer not found** | phone not in the CRM | offers another number, how to start a claim, or a human — never asks for a DOB |
 | **Representative escalation** | asked for a person, lock-out, distress, unsupported question, system down | ticket + warm-handoff context to Slack; live transfer in hours, callback outside |
-| Emergency | regex guard + explicit tool | 911 script first, claim business stops, call ends |
-| Out of scope | policy changes, quotes, legal/medical advice | declines and offers a human rather than guessing |
+| **Emergency** | regex guard + explicit tool | 911 script first, claim business stops, call ends |
+| **Out of scope** | policy changes, quotes, legal/medical advice | declines and offers a human rather than guessing |
 
-The first four are the ones the assessment asks for. Each has a seeded persona
-behind it, and `scripts/simulate_call.py` replays any of them against a running
-server without spending voice minutes.
+Every flow has a seeded persona behind it, and `scripts/simulate_call.py`
+replays any of them against a running server without spending voice minutes.
 
-Bonuses: multi-agent orchestration (3-agent squad), knowledge base with a
-refusal threshold, and a third integration (Slack) — plus two interchangeable
-systems of record behind one interface, swappable with one environment variable.
+Built on top of those flows: multi-agent orchestration (3-agent squad), a
+knowledge base with a refusal threshold, Slack as a third integration, and two
+interchangeable systems of record behind one interface, swappable with one
+environment variable.
 
 ## Why it is built this way
 
@@ -174,7 +174,7 @@ app/
     identity.py        lookup_customer, verify_identity
     claims.py          get_claim_status, get_document_instructions
     faq.py             search_knowledge_base
-    escalation.py      escalate_to_human, report_emergency
+    escalation.py      escalate_to_human, record_callback_number, report_emergency
     interactions.py    log_interaction (Integration #2, in-call path)
   knowledge/
     __init__.py        retrieval with a refusal threshold

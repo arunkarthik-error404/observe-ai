@@ -213,6 +213,29 @@ def test_interaction_upserts_by_external_id(org):
     assert "denied" in body["Description"]
 
 
+def test_the_callback_number_is_in_the_description_not_the_contact_match(org):
+    """A number only present in the transcript is a callback nobody makes.
+
+    It stays out of the contact lookup on purpose: it is unverified and need
+    not be the number on the policy, so matching a Task to a customer on it
+    could file the call against the wrong person.
+    """
+    repo, fake = org
+    repo.write_interaction(InteractionRecord(
+        call_id="01a14f07-b862-7bb9",
+        caller_phone="",                 # web call: no caller ID at all
+        callback_number="8072593908",
+        caller_name="Unverified caller",
+        summary="Caller could not recall the number on the account.",
+        outcome="callback_scheduled",
+        escalated=True,
+    ))
+
+    body = fake.patches[0]["body"]
+    assert "Call back on: 8072593908" in body["Description"]
+    assert "WhoId" not in body
+
+
 def test_a_racing_write_retries_and_succeeds(org, monkeypatch):
     """Both write paths can upsert in the same second; one loses the insert."""
     repo, fake = org

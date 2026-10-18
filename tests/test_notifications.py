@@ -106,6 +106,36 @@ def test_the_message_leads_with_whether_identity_was_verified():
     assert "3 failed ID attempt" in json.dumps(unverified, ensure_ascii=False)
 
 
+def test_the_message_gives_one_number_to_dial():
+    """The callback number wins: it is not always the caller ID, and on a web
+    call there is no caller ID to fall back on."""
+    message = notifications.build_message({
+        "ticket_id": "ESC-7", "caller_phone": "5556936678",
+        "callback_number": "8072593908",
+    }, "callback")
+    text = json.dumps(message)
+    assert "8072593908 (given for callback)" in text
+
+
+def test_a_callback_with_no_number_says_so_loudly():
+    """"unknown" read like a missing detail rather than a callback that cannot
+    happen, so nobody chased it."""
+    message = notifications.build_message(
+        {"ticket_id": "ESC-8", "caller_phone": "", "callback_number": ""}, "callback")
+    assert "none captured" in json.dumps(message, ensure_ascii=False)
+
+
+def test_the_callback_follow_up_names_the_ticket_and_the_number():
+    update = notifications.build_callback_update({
+        "ticket_id": "ESC-9111", "callback_number": "8072593908",
+        "customer_name": "unverified", "identity_verified": False,
+    })
+    text = json.dumps(update, ensure_ascii=False)
+    assert update["text"] == "Callback number for ESC-9111: 8072593908"
+    assert "8072593908" in text
+    assert "identity NOT verified" in text
+
+
 def test_the_message_has_a_plain_text_fallback():
     """Without `text`, Slack renders 'This content can't be displayed'."""
     payload = notifications.build_message(

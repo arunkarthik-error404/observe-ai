@@ -49,6 +49,7 @@
     "backgroundSound": "off",
     "recordingEnabled": true,
     "endCallFunctionEnabled": true,
+    "_endcall_comment": "This is the ONLY farewell on the line. Vapi speaks it when the model ends the call, so the prompts forbid the model from adding its own - see 'Do not say goodbye' in _shared_rules.md. With both in play a live call signed off twice: 'Thank you for calling Observe Insurance. Have a great day! Goodbye!' and then this line. If you reword this, do not also let the prompt say goodbye.",
     "endCallMessage": "Thanks for calling Observe Insurance. Take care.",
     "serverMessages": ["tool-calls", "end-of-call-report", "status-update"],
     "analysisPlan": {
@@ -136,7 +137,7 @@
       }
     },
     "search_knowledge_base": {
-      "description": "Answer a general question about Observe Insurance: office hours, mailing address, how to start a new claim, the claims process, document submission, payment timing, appeals, deductibles, rental cover, privacy. Use this instead of answering from memory. Does not require authentication.",
+      "description": "Answer a general question about Observe Insurance: office hours, mailing address, how to start a new claim, the claims process, document submission, payment timing, appeals, deductibles, rental cover, privacy. This is the only approved source for any fact you state out loud - call it for every general or factual question rather than answering from memory, including questions that sound unrelated to insurance, and follow the instruction it returns when it finds no match. Does not require authentication.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -155,17 +156,34 @@
         "properties": {
           "reason": {
             "type": "string",
-            "description": "Short reason code, e.g. caller_request, authentication_failed, customer_not_found, unsupported_question, system_unavailable, distressed_caller."
+            "description": "Short reason code: caller_request, authentication_failed (a date of birth was given and did not match), customer_not_found (a number was looked up and no account matched), no_identifier_given (the caller never gave a number to look up), verification_incomplete (an account was found but identity was never confirmed), distressed_caller, unsupported_question, system_unavailable. The identity-related codes are checked against what happened in the call and corrected if wrong."
           },
           "urgency": { "type": "string", "enum": ["low", "normal", "high"] },
           "notes": {
             "type": "string",
             "description": "One sentence of context for the human agent picking this up."
+          },
+          "callback_number": {
+            "type": "string",
+            "description": "Only if the caller has already given a number to be reached on. Leave empty otherwise - the result will tell you whether to ask for one."
           }
         },
         "required": ["reason"]
       },
       "request_start": "Let me get someone for you."
+    },
+    "record_callback_number": {
+      "description": "Save the phone number a human should call the caller back on. Required before ending any call where you promised a callback - the number is not captured from the conversation by itself.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "callback_number": {
+            "type": "string",
+            "description": "The number the caller gave, digits only if possible, e.g. 8072593908."
+          }
+        },
+        "required": ["callback_number"]
+      }
     },
     "report_emergency": {
       "description": "Call immediately if the caller describes a life-threatening or in-progress emergency: fire, gas leak, injuries, chest pain, someone not breathing, self-harm, or an accident happening right now.",
@@ -220,6 +238,7 @@
         "get_document_instructions",
         "search_knowledge_base",
         "escalate_to_human",
+        "record_callback_number",
         "report_emergency",
         "log_interaction"
       ]
@@ -260,7 +279,7 @@
       "mode": "squad",
       "prompt": "prompts/squad_escalation.md",
       "_tools_comment": "report_emergency is on every agent without exception. A caller can declare a crisis at any point in the call, including while being handed to a human, and an agent that cannot route it has to improvise.",
-      "tools": ["escalate_to_human", "log_interaction", "search_knowledge_base", "report_emergency"]
+      "tools": ["escalate_to_human", "record_callback_number", "log_interaction", "search_knowledge_base", "report_emergency"]
     }
   },
 

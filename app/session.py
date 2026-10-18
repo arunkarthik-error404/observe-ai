@@ -52,6 +52,14 @@ class CallSession:
     claims_discussed: list[str] = field(default_factory=list)
     escalated: bool = False
     escalation_reason: str = ""
+    ticket_id: str = ""
+    # Where a human should ring. Deliberately not `claimed_phone`: a caller who
+    # cannot remember the number on the policy can still give one to be reached
+    # on, and a web call carries no caller ID to fall back to.
+    callback_number: str = ""
+    # The outcome the agent logged mid-call, remembered so the end-of-call
+    # report cannot replace a real outcome with the initial auth state.
+    outcome: str = ""
     emergency: bool = False
     tool_events: list[ToolEvent] = field(default_factory=list)
     assistant_path: list[str] = field(default_factory=list)
@@ -85,6 +93,9 @@ class CallSession:
             "claims_discussed": self.claims_discussed,
             "escalated": self.escalated,
             "escalation_reason": self.escalation_reason,
+            "ticket_id": self.ticket_id,
+            "callback_number": self.callback_number,
+            "outcome": self.outcome,
             "emergency": self.emergency,
             "assistant_path": self.assistant_path,
             "latency": self.latency,

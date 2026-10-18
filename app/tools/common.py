@@ -1,7 +1,6 @@
 """Shared helpers and policy for every tool.
 
-Design rules the whole package enforces (these are the interview talking
-points):
+Design rules the whole package enforces:
 
 1. **The model is never the source of truth.** Authentication state lives in
    the session store, so `get_claim_status` checks the server, not the
@@ -96,7 +95,9 @@ def unavailable(action: str) -> dict[str, Any]:
         "action": action,
         "instruction": (
             "Our claims system did not respond. Apologise briefly, say you cannot read the record "
-            "right now, and offer to connect the caller to a representative. Do not invent any detail."
+            "right now, and offer to have someone help them. Say only that someone can help — not "
+            "that you will connect or transfer them, because whether that is a live transfer or a "
+            "callback is decided by escalate_to_human, not here. Do not invent any detail."
         ),
     }
 

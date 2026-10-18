@@ -105,6 +105,26 @@ def _handle_tool_calls(call_id: str, message: dict[str, Any], msg_type: str) -> 
     return {"results": results}
 
 
+def _concluded_outcome(session: Any) -> str:
+    """The auth state, but only once it has actually concluded.
+
+    `pending` is what a session starts as, not something a call ended as; on a
+    completed record it reads as work still to do.
+
+    This is the last fallback rather than a safety net. Carrying the outcome
+    forward on the session is what actually stops the downgrade, because the
+    Salesforce `Subject` is derived from this value and is sent on every write
+    — unlike the custom fields, an empty outcome does not leave the stored one
+    alone. A session lost to its TTL or a restart before the end-of-call report
+    arrives therefore still writes a generic subject over a specific one; the
+    window is one call long, and closing it properly means moving the outcome
+    off `Subject` and into a field of its own.
+    """
+    if session is None or session.auth_outcome == "pending":
+        return ""
+    return str(session.auth_outcome)
+
+
 def _handle_end_of_call(call_id: str, message: dict[str, Any]) -> Any:
     """Integration #2, primary path: write the post-call record."""
     analysis = message.get("analysis") or {}
@@ -129,19 +149,28 @@ def _handle_end_of_call(call_id: str, message: dict[str, Any]) -> Any:
             or "Unverified caller"
         ),
         caller_phone=(session.claimed_phone if session else "") or payloads.caller_number(message),
+        callback_number=(session.callback_number if session else ""),
         summary=summary,
         sentiment=payloads.sentiment_from(analysis, structured),
         intent=", ".join(session.intents) if session and session.intents
-        else str(structured.get("intent", "")),
+        else payloads.intent_from(analysis, structured),
         authenticated=bool(session.authenticated) if session else False,
         escalated=bool(session.escalated) if session else bool(structured.get("escalated")),
         # In squad mode Vapi ignored the per-assistant structured-data schema and
         # returned its own default fields, so this reads both shapes and falls
         # back to session state. Never depend on a provider's extraction alone.
+        #
+        # The session's own `outcome` sits ahead of `auth_outcome` because this
+        # write lands on top of the in-call one. A squad call whose
+        # structuredData carried no outcome field used to fall straight through
+        # to `auth_outcome` and relabel a record the agent had already logged as
+        # `callback_scheduled` back to `pending` — the second, poorer write
+        # winning. See `_concluded_outcome`.
         outcome=str(
             structured.get("outcome")
             or structured.get("call_disposition")
-            or (session.auth_outcome if session else "")
+            or (session.outcome if session else "")
+            or _concluded_outcome(session)
         )[:200],
         claim_ids=", ".join(session.claims_discussed) if session else str(structured.get("claim_id", "")),
         duration_seconds=payloads.duration_from(message),

@@ -31,17 +31,26 @@ def log_interaction(session: CallSession, args: dict[str, Any]) -> dict[str, Any
     are logged, and the end-of-call-report webhook — which no caller is waiting
     on, and which Vapi retries — is the backstop.
     """
+    # Remembered on the session so the end-of-call report, which has no idea
+    # what the agent concluded, cannot overwrite a real outcome with the
+    # initial auth state. Only a model-supplied outcome counts — the
+    # `auth_outcome` fallback below is a default, not a conclusion.
+    supplied_outcome = (args.get("outcome") or "").strip()
+    if supplied_outcome:
+        session.outcome = supplied_outcome
+
     record = InteractionRecord(
         call_id=session.call_id,
         caller_name=(session.customer.full_name if session.customer
                      else args.get("caller_name") or "Unverified caller"),
         caller_phone=session.claimed_phone,
+        callback_number=session.callback_number,
         summary=(args.get("summary") or "").strip(),
         sentiment=(args.get("sentiment") or "neutral").strip().lower(),
         intent=", ".join(session.intents),
         authenticated=session.authenticated,
         escalated=session.escalated,
-        outcome=(args.get("outcome") or session.auth_outcome).strip(),
+        outcome=supplied_outcome or session.auth_outcome,
         claim_ids=", ".join(session.claims_discussed),
         source="in-call-tool",
     )
@@ -62,6 +71,10 @@ def log_interaction(session: CallSession, args: dict[str, Any]) -> dict[str, Any
         "ok": True,
         "queued": True,
         "instruction": (
-            "Record saved. Close the call warmly: ask if there is anything else, then say goodbye."
+            # Deliberately not "then say goodbye": the sign-off is Vapi's
+            # endCallMessage, spoken when the call ends. Asking for one here
+            # produced two farewells back to back on a live call.
+            "Record saved. Close the call warmly: ask if there is anything else, and when they say "
+            "no, end the call. Do not say goodbye — the sign-off is spoken for you."
         ),
     }

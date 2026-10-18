@@ -46,8 +46,10 @@ def lookup_customer(session: CallSession, args: dict[str, Any]) -> dict[str, Any
             "instruction": (
                 "No account matches that number. Say so plainly, then offer three options: try a "
                 "different number in case the policy is under a spouse or parent, start a new claim "
-                "(offer to explain how), or be transferred to a representative. Do not ask for a "
-                "date of birth — there is nothing to verify against."
+                "(offer to explain how), or have someone help them. Say only that someone can "
+                "help — not that you will connect or transfer them, because whether that is a "
+                "live transfer or a callback is not known yet. Do not ask for a date of birth — "
+                "there is nothing to verify against."
             ),
         }
 

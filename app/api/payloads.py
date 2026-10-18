@@ -73,6 +73,27 @@ def sentiment_from(analysis: dict[str, Any], structured: dict[str, Any]) -> str:
     return "neutral"
 
 
+def intent_from(analysis: dict[str, Any], structured: dict[str, Any]) -> str:
+    """Read both my schema and the default one Vapi substitutes in squad mode.
+
+    Same failure as `sentiment_from`: a call where no server tool ran leaves no
+    session to read intents off, and `structuredData["intent"]` is only there
+    when Vapi honoured the configured schema. On the squad it did not, sending
+    `call_type` and `issue_type` instead, so the field landed empty on exactly
+    the calls with the least other information about them.
+
+    Ordered most specific first — `call_type` is usually something generic like
+    "Claims Support" and is the last resort rather than the answer.
+    """
+    for key in ("intent", "primary_intent", "issue_type", "call_reason", "call_type"):
+        value = structured.get(key)
+        if value:
+            # Matched to the session's own format ("claim_status, faq") so both
+            # sources group together in a report instead of splitting in two.
+            return " ".join(str(value).lower().split()).replace(" ", "_")
+    return ""
+
+
 def recording_url(message: dict[str, Any]) -> str:
     """Vapi moved this around; check every place it has lived."""
     artifact = message.get("artifact") or {}

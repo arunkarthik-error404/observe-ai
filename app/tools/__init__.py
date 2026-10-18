@@ -15,7 +15,7 @@ from typing import Any
 from ..session import CallSession, ToolEvent
 from .claims import get_claim_status, get_document_instructions
 from .common import EMERGENCY_PATTERNS, EMERGENCY_SCRIPT, ToolHandler, log
-from .escalation import escalate_to_human, report_emergency
+from .escalation import escalate_to_human, record_callback_number, report_emergency
 from .faq import search_knowledge_base
 from .identity import lookup_customer, verify_identity
 from .interactions import WRITER, log_interaction
@@ -29,6 +29,7 @@ REGISTRY: dict[str, ToolHandler] = {
     "get_document_instructions": get_document_instructions,
     "search_knowledge_base": search_knowledge_base,
     "escalate_to_human": escalate_to_human,
+    "record_callback_number": record_callback_number,
     "report_emergency": report_emergency,
     "log_interaction": log_interaction,
 }

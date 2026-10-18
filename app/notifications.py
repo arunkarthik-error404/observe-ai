@@ -39,6 +39,22 @@ def is_configured() -> bool:
     return bool(settings().slack_webhook_url.strip())
 
 
+def _number_to_dial(context: dict[str, Any]) -> str:
+    """One number, and a visible gap when there is none.
+
+    The receiving human needs a single thing to dial, so the number the caller
+    gave for a callback wins over the caller ID — they are not always the same,
+    and on a web call there is no caller ID at all. "unknown" used to be the
+    fallback here, which reads like a missing detail rather than a callback
+    that cannot happen.
+    """
+    caller_phone = str(context.get("caller_phone") or "")
+    callback = str(context.get("callback_number") or "")
+    if callback and callback != caller_phone:
+        return f"{callback} (given for callback)"
+    return caller_phone or callback or "⚠️ none captured — no number to ring"
+
+
 def build_message(context: dict[str, Any], transfer: str) -> dict[str, Any]:
     """Build the Slack payload. Pure, so it can be asserted on in tests."""
     verified = bool(context.get("identity_verified"))
@@ -55,7 +71,7 @@ def build_message(context: dict[str, Any], transfer: str) -> dict[str, Any]:
 
     fields = [
         {"type": "mrkdwn", "text": f"*Caller*\n{name}"},
-        {"type": "mrkdwn", "text": f"*Phone*\n{context.get('caller_phone') or 'unknown'}"},
+        {"type": "mrkdwn", "text": f"*Phone*\n{_number_to_dial(context)}"},
         {"type": "mrkdwn", "text": f"*Identity*\n{identity}"},
         {"type": "mrkdwn", "text": f"*Policy*\n{context.get('policy_id') or '—'}"},
         {"type": "mrkdwn", "text": f"*Claims discussed*\n{', '.join(claims) if claims else '—'}"},
@@ -102,6 +118,10 @@ def build_message(context: dict[str, Any], transfer: str) -> dict[str, Any]:
         footer += f" · covered: {', '.join(topics)}"
     if attempts:
         footer += f" · {attempts} failed ID attempt(s)"
+    # Visible rather than silent: the notes were written to fit the code the
+    # agent reported, so a human reading a corrected ticket needs to know.
+    if context.get("reason_reported"):
+        footer += f" · agent reported: {context['reason_reported'].replace('_', ' ')}"
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": footer}]})
 
     return {
@@ -126,9 +146,42 @@ def _post(payload: dict[str, Any], ticket_id: str) -> None:
         log.error("slack_post_error", extra={"ticket": ticket_id, "error": str(exc)})
 
 
+def build_callback_update(context: dict[str, Any]) -> dict[str, Any]:
+    """A short follow-up putting the callback number on an open ticket.
+
+    A second message rather than an edit of the first: a webhook post is
+    fire-and-forget with no message id to come back to, and a human who has
+    already read the escalation needs the number to arrive as a new
+    notification anyway.
+    """
+    ticket = context.get("ticket_id") or "—"
+    number = context.get("callback_number") or "unknown"
+    name = context.get("customer_name") or "Unverified caller"
+    verified = "" if context.get("identity_verified") else " — identity NOT verified"
+    return {
+        "text": f"Callback number for {ticket}: {number}",
+        "blocks": [{
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (f"📞 *Callback number confirmed* · ticket *{ticket}*\n"
+                         f"Ring *{number}* — {name}{verified}"),
+            },
+        }],
+    }
+
+
 def notify_escalation(context: dict[str, Any], transfer: str) -> bool:
     """Queue a Slack notification. Returns whether one was queued."""
     if not is_configured():
         return False
     NOTIFIER.submit(_post, build_message(context, transfer), str(context.get("ticket_id", "")))
+    return True
+
+
+def notify_callback_number(context: dict[str, Any]) -> bool:
+    """Queue the callback-number follow-up. Same no-op and no-raise rules."""
+    if not is_configured():
+        return False
+    NOTIFIER.submit(_post, build_callback_update(context), str(context.get("ticket_id", "")))
     return True

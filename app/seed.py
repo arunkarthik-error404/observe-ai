@@ -140,6 +140,7 @@ INTERACTION_HEADERS: list[str] = [
     "call_id",
     "caller_name",
     "caller_phone",
+    "callback_number",
     "sentiment",
     "intent",
     "authenticated",

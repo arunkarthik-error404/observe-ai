@@ -88,6 +88,11 @@ class InteractionRecord(BaseModel):
     timestamp: str = Field(default_factory=utc_now_iso)
     caller_name: str = "Unknown"
     caller_phone: str = ""
+    # Kept apart from `caller_phone` on purpose: that one is the account /
+    # caller-ID number and is what the CRM matches a contact on, while this is
+    # only where a human agreed to ring back. Matching a record on an
+    # unverified callback number could attach a call to the wrong customer.
+    callback_number: str = ""
     summary: str = ""
     sentiment: str = "neutral"
     intent: str = ""
