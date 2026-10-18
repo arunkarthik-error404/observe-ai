@@ -977,3 +977,19 @@ def test_a_long_answer_is_told_to_stop_rather_than_recite():
                        query="how do I send photos")["instruction"].lower()
     assert "do not read the whole list" in instruction
     assert "stop and let them ask" in instruction
+
+
+def test_document_channels_are_spoken_not_printed():
+    """Same strings as the knowledge base, reached through a different tool.
+    Fixing only the KB left this one able to read out an email address with
+    no "at" in it."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-361-2234")
+    tool(call_id, "verify_identity", date_of_birth="1988-04-12")
+    docs = tool(call_id, "get_document_instructions")
+
+    details = " ".join(c["detail"] for c in docs["channels"])
+    assert "@" not in details
+    assert "claims at observeinsurance dot com" in details
+    assert "9 1 6, 5 5 5, 0 1 8 8" in details
+    assert "megabytes" in docs["accepted_formats"]

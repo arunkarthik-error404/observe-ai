@@ -8,11 +8,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..knowledge import speakable
 from ..models import normalize_claim_id
 from ..repositories import RepositoryError, repository
 from ..session import CallSession
 from .common import claim_brief, log, requires_auth, unavailable
 
+# Written forms, kept readable here. They are rewritten for the voice on the
+# way out — the knowledge base had the same strings and the same problem, and
+# fixing only that half left this tool still able to say an email address with
+# no "at" in it.
 SUBMISSION_CHANNELS = [
     {"channel": "portal", "detail": "observeinsurance.com/upload", "posts_in": "minutes", "preferred": True},
     {"channel": "email", "detail": "claims@observeinsurance.com with the claim number in the subject",
@@ -134,8 +139,8 @@ def get_document_instructions(session: CallSession, args: dict[str, Any]) -> dic
         "claim_id": target.claim_id if target else "",
         "required_documents": target.required_documents if target else "",
         "deadline": target.submission_deadline if target else "",
-        "channels": SUBMISSION_CHANNELS,
-        "accepted_formats": "PDF, JPG, PNG or HEIC, up to 25MB per file",
+        "channels": [{**c, "detail": speakable(c["detail"])} for c in SUBMISSION_CHANNELS],
+        "accepted_formats": "PDF, JPG, PNG or HEIC, up to 25 megabytes per file",
         "instruction": (
             "List the required documents first, then recommend the portal as the fastest option and "
             "offer email as the alternative. Give the deadline if there is one. Offer to text or "
