@@ -1,5 +1,10 @@
 # Render blueprint. Secrets are never in this file: everything marked
 # `sync: false` is entered once in the Render dashboard and stays there.
+#
+# Free plan note: the instance sleeps after 15 minutes of no traffic and takes
+# roughly a minute to wake. A voice call cannot wait that long — the first tool
+# call would time out and the caller would hear dead air. Hit /health a couple
+# of minutes before a demo, or keep it warm with a scheduled ping.
 services:
   - type: web
     name: observe-claims-agent
@@ -13,16 +18,33 @@ services:
       - key: PYTHON_VERSION
         value: "3.12.7"
 
-      # Google Sheets is the system of record in a deployed environment.
+      # --- system of record ---------------------------------------------
+      # salesforce | sheets | memory. The adapters are interchangeable, so
+      # switching system of record is this one variable and a restart.
       - key: BACKEND
-        value: sheets
-      # The whole service-account key, on one line. On Render this is the only
-      # practical option — there is no file to point at.
+        value: salesforce
+
+      # Salesforce. SF_LOGIN_URL must be the org's My Domain URL — the generic
+      # login.salesforce.com returns invalid_client_id for client-credentials.
+      - key: SF_LOGIN_URL
+        sync: false
+      - key: SF_AUTH_FLOW
+        value: client_credentials
+      - key: SF_CLIENT_ID
+        sync: false
+      - key: SF_CLIENT_SECRET
+        sync: false
+      - key: SF_API_VERSION
+        value: v62.0
+
+      # Google Sheets, for BACKEND=sheets. The whole service-account key goes
+      # inline on one line: on Render there is no file to point at.
       - key: GOOGLE_CREDENTIALS_JSON
         sync: false
       - key: SHEET_ID
         sync: false
 
+      # --- security -------------------------------------------------------
       # Reject any webhook that cannot prove it came from Vapi.
       - key: REQUIRE_SECRET
         value: "true"
@@ -38,10 +60,16 @@ services:
       - key: VAPI_SQUAD_ID
         sync: false
 
+      # --- behaviour ------------------------------------------------------
+      - key: MAX_AUTH_ATTEMPTS
+        value: "3"
       # auto | open | closed — pin it to demo either escalation branch.
       - key: BUSINESS_HOURS_MODE
         value: auto
       # Leave unset unless a real PSTN destination exists; without one the
       # agent correctly offers a callback instead of promising a transfer.
       - key: TRANSFER_PHONE_NUMBER
+        sync: false
+      # Integration #3. Empty disables the notifier rather than breaking it.
+      - key: SLACK_WEBHOOK_URL
         sync: false
