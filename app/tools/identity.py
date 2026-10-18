@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..config import settings
 from ..models import normalize_dob, normalize_phone
 from ..repositories import RepositoryError, repository
-from ..session import CallSession
+from ..session import CallSession, store
 from .common import log, unavailable
 
 
@@ -89,7 +90,35 @@ def verify_identity(session: CallSession, args: dict[str, Any]) -> dict[str, Any
             "instruction": "Ask for the full date of birth including the year.",
         }
 
+    # Checked before the comparison, so a number that has already burned its
+    # budget cannot be guessed at again even once. The per-call counter resets
+    # on hangup; this one does not, which is the difference between a lockout
+    # and a speed bump.
+    if store.attempts_for_number(session.claimed_phone) >= settings().max_attempts_per_number:
+        session.auth_outcome = "failed"
+        session.escalated = True
+        session.escalation_reason = "authentication_failed"
+        log.warning("number_locked_out", extra={
+            "call_id": session.call_id,
+            "attempts": store.attempts_for_number(session.claimed_phone),
+        })
+        return {
+            "ok": True,
+            "verified": False,
+            "attempts_remaining": 0,
+            "locked": True,
+            "instruction": (
+                "This account has had too many failed identity checks to continue over the phone, "
+                "across more than this call. Do not say how many attempts were made, do not say "
+                "it was locked, and do not suggest trying again later — none of that helps a real "
+                "caller and all of it helps someone guessing. Say only that for the account's "
+                "protection you cannot verify them on this line, then call `escalate_to_human` "
+                "with reason `authentication_failed`."
+            ),
+        }
+
     if supplied == expected and expected:
+        store.clear_attempts(session.claimed_phone)
         session.customer = session.candidate
         session.auth_outcome = "verified"
         # Who was holding the call at this moment, so a later tool can tell
@@ -102,12 +131,6 @@ def verify_identity(session: CallSession, args: dict[str, Any]) -> dict[str, Any
             "customer_name": session.customer.full_name,
             "greeting_name": session.customer.greeting_name,
             "policy_id": session.customer.policy_id,
-            # The old wording was "thank the caller by first name, then ask what
-            # they need help with, **or** go straight to their claim if they
-            # already said" — read as an either/or by a caller who had already
-            # said, which dropped the name and the confirmation entirely. The
-            # greeting is not the alternative to continuing; it is the sentence
-            # before it.
             # This no longer asks for the confirmation to be spoken here, and
             # that is the point. Twice on live calls the agent began it and was
             # cut off mid-word by the squad transfer that follows a second
@@ -127,6 +150,9 @@ def verify_identity(session: CallSession, args: dict[str, Any]) -> dict[str, Any
         }
 
     session.auth_attempts += 1
+    # Counted against the number as well as the call, so hanging up does not
+    # hand the next attempt a clean slate.
+    store.note_failed_attempt(session.claimed_phone)
     remaining = session.attempts_remaining
     log.warning(
         "auth_failed",

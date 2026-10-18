@@ -25,8 +25,10 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def fresh_state():
     repository().reset()
+    store.reset()
     yield
     repository().reset()
+    store.reset()
 
 
 def tool(call_id: str, name: str, **arguments: Any) -> dict[str, Any]:
@@ -1150,3 +1152,64 @@ def test_the_last_tool_before_hangup_forbids_a_parting_filler():
                        summary="Checked a claim.", sentiment="neutral")["instruction"].lower()
     assert "put nothing in front of ending it" in instruction
     assert "nobody is waiting" in instruction
+
+
+# --- throttling that outlives the call ------------------------------------
+def test_guessing_is_not_reset_by_hanging_up_and_redialling(monkeypatch):
+    """`auth_attempts` lives on CallSession, which dies with the call. Three
+    wrong dates of birth, a redial, and three more was unlimited guessing
+    against a known number."""
+    from app import config
+
+    config.settings.cache_clear()
+    monkeypatch.setenv("MAX_ATTEMPTS_PER_NUMBER", "5")
+    try:
+        burned = 0
+        for _ in range(3):                       # three separate calls
+            call_id = new_call()
+            tool(call_id, "lookup_customer", phone_number="555-418-4492")
+            for year in (1970, 1971, 1972):
+                result = tool(call_id, "verify_identity", date_of_birth=f"{year}-01-01")
+                if result.get("locked") and result["instruction"].startswith("This account"):
+                    # The number ran out of budget, mid-call, on a fresh session.
+                    assert burned >= 5
+                    assert "how many attempts" in result["instruction"]
+                    return
+                burned += 1
+        raise AssertionError("a redial handed out a clean slate")
+    finally:
+        monkeypatch.delenv("MAX_ATTEMPTS_PER_NUMBER", raising=False)
+        config.settings.cache_clear()
+
+
+def test_verifying_successfully_forgives_the_number(monkeypatch):
+    """Otherwise a caller who fumbles twice and then gets it right is counted
+    against for the next hour."""
+    from app import config
+    from app.session import store as session_store
+
+    config.settings.cache_clear()
+    try:
+        call_id = new_call()
+        tool(call_id, "lookup_customer", phone_number="555-418-4492")
+        tool(call_id, "verify_identity", date_of_birth="1970-01-01")
+        assert session_store.attempts_for_number("5554184492") == 1
+
+        assert tool(call_id, "verify_identity", date_of_birth="1965-02-28")["verified"] is True
+        assert session_store.attempts_for_number("5554184492") == 0
+    finally:
+        config.settings.cache_clear()
+
+
+def test_the_ticket_id_is_stable_across_restarts():
+    """Python salts string hashing per process, so the same call produced
+    ESC-4982, ESC-3744 and ESC-6060 on three runs — an id that changes if the
+    server restarts between a caller writing it down and a human looking it
+    up."""
+    import hashlib
+
+    call_id = new_call()
+    ticket = tool(call_id, "escalate_to_human", reason="caller_request")["ticket_id"]
+    expected = int(hashlib.sha256(call_id.encode()).hexdigest()[:8], 16) % 9000 + 1000
+    assert ticket == f"ESC-{expected}"
+    assert len(ticket) == len("ESC-0000")  # still four digits, still sayable

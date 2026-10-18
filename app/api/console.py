@@ -11,14 +11,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 
 from .. import notifications
 from ..config import settings
 from ..models import utc_now_iso
+from ..redaction import redact_snapshot
 from ..repositories import repository
 from ..session import store
+from .security import console_unmasked
 
 router = APIRouter(tags=["console"])
 WEB_DIR = Path(__file__).resolve().parents[2] / "web"
@@ -43,12 +45,18 @@ def _data_layer_health() -> dict:
 
 
 @router.get("/health")
-def health() -> dict[str, Any]:
+def health(t: str | None = None, x_debug_token: str | None = Header(default=None)) -> dict[str, Any]:
     cfg = settings()
+    layer = _data_layer_health()
+    if not console_unmasked(t, x_debug_token):
+        # The org's My Domain URL and the remaining API quota are free
+        # reconnaissance: one names the tenant, the other says how many calls
+        # it would take to exhaust it. Liveness does not need either.
+        layer = {k: v for k, v in layer.items() if k not in {"instance", "api_calls_remaining"}}
     return {
         "ok": True,
         "backend": cfg.backend,
-        "data_layer": _data_layer_health(),
+        "data_layer": layer,
         "secret_enforced": bool(cfg.vapi_secret),
         "slack_notifications": notifications.is_configured(),
         "active_calls": len(store.all()),
@@ -56,17 +64,40 @@ def health() -> dict[str, Any]:
     }
 
 
+def _view(session, unmasked: bool) -> dict[str, Any]:
+    """One place decides whether a snapshot keeps its PII.
+
+    These endpoints had no authentication and returned `tool_events` with the
+    raw arguments each tool was called with — and `verify_identity`'s argument
+    is the caller's date of birth. Anyone could read a live caller's phone
+    number, date of birth and verified name off the open internet: the exact
+    pair this system treats as credentials. Masked is now the default for
+    everyone, and the token lifts it rather than granting access, so a
+    forgotten `DEBUG_TOKEN` leaves the console working and the data covered.
+    """
+    snapshot = session.snapshot()
+    return snapshot if unmasked else redact_snapshot(snapshot)
+
+
 @router.get("/debug/calls")
-def debug_calls() -> dict[str, Any]:
-    return {"count": len(store.all()), "calls": [s.snapshot() for s in store.all()]}
+def debug_calls(t: str | None = None,
+                x_debug_token: str | None = Header(default=None)) -> dict[str, Any]:
+    unmasked = console_unmasked(t, x_debug_token)
+    sessions = store.all()
+    return {
+        "count": len(sessions),
+        "redacted": not unmasked,
+        "calls": [_view(s, unmasked) for s in sessions],
+    }
 
 
 @router.get("/debug/calls/{call_id}")
-def debug_call(call_id: str) -> dict[str, Any]:
+def debug_call(call_id: str, t: str | None = None,
+               x_debug_token: str | None = Header(default=None)) -> dict[str, Any]:
     session = store.peek(call_id)
     if session is None:
         raise HTTPException(status_code=404, detail="no such call")
-    return session.snapshot()
+    return _view(session, console_unmasked(t, x_debug_token))
 
 
 @router.get("/", include_in_schema=False)

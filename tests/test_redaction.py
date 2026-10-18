@@ -104,3 +104,96 @@ def test_redaction_is_on_by_default():
         assert config.Settings().redact_logs is True
     finally:
         config.settings.cache_clear()
+
+
+# --- the debug API, which had no authentication at all --------------------
+def test_a_call_snapshot_served_over_http_carries_no_credentials():
+    """`/debug/calls` was public and returned `tool_events` with the raw
+    arguments each tool was called with — and `verify_identity`'s argument is
+    the caller's date of birth. Phone number plus date of birth is the pair
+    this system treats as credentials, readable by anyone during a live call.
+    """
+    from app.redaction import redact_snapshot
+
+    snapshot = {
+        "call_id": "01a1-aaaa",
+        "claimed_phone": "5554184492",
+        "candidate": "Marcus Webb",
+        "customer": "Marcus Webb",
+        "callback_number": "8072593908",
+        "ticket_id": "ESC-4982",
+        "tool_events": [
+            {"name": "verify_identity",
+             "arguments": {"date_of_birth": "February 28 1965"},
+             "result": {"customer_name": "Marcus Webb", "greeting_name": "Marcus",
+                        "policy_id": "POL-11204",
+                        "instruction": "Thanks, Marcus, you're all verified."}},
+        ],
+    }
+    safe = redact_snapshot(snapshot)
+    flat = json.dumps(safe)
+
+    # The credentials themselves.
+    assert "February 28 1965" not in flat
+    assert "5554184492" not in flat
+    assert "8072593908" not in flat
+    # The name, including where it is embedded in generated prose rather than
+    # sitting under a key a field-based pass would catch.
+    assert "Marcus" not in flat
+    assert "Webb" not in flat
+    assert "[name]" in safe["tool_events"][0]["result"]["instruction"]
+    # Still useful: the identifiers an operator debugs with survive.
+    assert safe["call_id"] == "01a1-aaaa"
+    assert safe["ticket_id"] == "ESC-4982"
+    assert safe["tool_events"][0]["name"] == "verify_identity"
+    # And the original is untouched.
+    assert snapshot["claimed_phone"] == "5554184492"
+
+
+def test_the_debug_endpoints_are_masked_without_a_token(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app import config
+    from app.main import app
+    from app.session import store
+
+    config.settings.cache_clear()
+    monkeypatch.setenv("DEBUG_TOKEN", "letmein")
+    try:
+        client = TestClient(app)
+        store.reset()
+        session = store.get("call_probe")
+        session.claimed_phone = "5554184492"
+
+        anon = client.get("/debug/calls").json()
+        assert anon["redacted"] is True
+        assert "5554184492" not in json.dumps(anon)
+
+        named = client.get("/debug/calls", params={"t": "letmein"}).json()
+        assert named["redacted"] is False
+        assert "5554184492" in json.dumps(named)
+
+        assert client.get("/debug/calls", params={"t": "wrong"}).json()["redacted"] is True
+    finally:
+        store.reset()
+        config.settings.cache_clear()
+
+
+def test_health_hides_the_org_and_its_remaining_quota(monkeypatch):
+    """One names the tenant, the other says how many calls it would take to
+    exhaust it. Liveness needs neither."""
+    from fastapi.testclient import TestClient
+
+    from app import config
+    from app.main import app
+
+    config.settings.cache_clear()
+    monkeypatch.setenv("DEBUG_TOKEN", "letmein")
+    try:
+        client = TestClient(app)
+        layer = client.get("/health").json()["data_layer"]
+        assert "instance" not in layer
+        assert "api_calls_remaining" not in layer
+        assert layer["ok"] is True  # still answers the question it exists for
+    finally:
+        config.settings.cache_clear()

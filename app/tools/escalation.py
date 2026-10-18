@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from ..config import settings
@@ -106,7 +107,15 @@ def escalate_to_human(session: CallSession, args: dict[str, Any]) -> dict[str, A
     # 96" followed by TTS gibberish — a reference number nobody could write
     # down. The call id is the real key and it is in the handoff context; this
     # is only what a human says to another human.
-    ticket_id = f"ESC-{abs(hash(session.call_id)) % 9000 + 1000}"
+    #
+    # sha256 rather than hash(): Python salts string hashing per process, so
+    # the same call produced ESC-4982, ESC-3744 and ESC-6060 on three runs —
+    # an id that changes if the server restarts between a caller writing it
+    # down and a human looking it up. Four digits still collide (about a 46%
+    # chance somewhere in 100 tickets), which is why nothing is ever looked up
+    # by this: Call_Id__c is the key in Salesforce and the handoff carries it.
+    digest = hashlib.sha256(session.call_id.encode()).hexdigest()
+    ticket_id = f"ESC-{int(digest[:8], 16) % 9000 + 1000}"
     session.ticket_id = ticket_id
     in_hours = business_hours_now()
 

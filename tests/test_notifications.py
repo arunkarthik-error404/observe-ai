@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from app import notifications
 from app.main import app
 from app.repositories import repository
+from app.session import store
 
 client = TestClient(app)
 
@@ -23,8 +24,10 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def fresh_state():
     repository().reset()
+    store.reset()
     yield
     repository().reset()
+    store.reset()
 
 
 def escalate(**arguments: Any) -> dict[str, Any]:

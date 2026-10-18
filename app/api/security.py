@@ -43,6 +43,29 @@ def token_matches(token: str) -> bool:
     return bool(cfg.vapi_secret) and hmac.compare_digest(token, cfg.vapi_secret)
 
 
+def console_unmasked(token: str | None, header: str | None) -> bool:
+    """Whether this caller may see a call snapshot with the PII still in it.
+
+    The operator console is useful without PII and dangerous with it, so the
+    default is masked for everyone and the token only lifts the mask. That way
+    a missing or mistyped `DEBUG_TOKEN` fails closed — the page still works and
+    shows asterisks — rather than failing open on the one endpoint that can
+    serve a caller's date of birth.
+
+    With no token configured this returns False in production and True
+    locally, because a developer debugging a value they cannot otherwise see is
+    the whole reason the console exists.
+    """
+    cfg = settings()
+    expected = cfg.debug_token.strip()
+    if not expected:
+        return not cfg.require_secret
+    return any(
+        supplied and hmac.compare_digest(supplied, expected)
+        for supplied in (token, header)
+    )
+
+
 def require_secret(supplied: str | None, request: Request) -> None:
     cfg = settings()
     if not cfg.vapi_secret:

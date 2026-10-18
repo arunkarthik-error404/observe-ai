@@ -72,8 +72,17 @@ class Settings(BaseSettings):
     # never in an environment handling real customers.
     redact_logs: bool = True
 
+    # Lifts the mask on /debug/calls and on the infrastructure fields in
+    # /health. Empty means masked for everyone in production and visible
+    # locally, so forgetting to set it fails closed.
+    debug_token: str = ""
+
     # --- behaviour --------------------------------------------------------
     max_auth_attempts: int = 3
+    # Guesses allowed against one phone number across every call, not just
+    # within one. max_auth_attempts resets the moment a caller hangs up and
+    # redials, which makes it a speed bump rather than a lockout.
+    max_attempts_per_number: int = 9
     session_ttl_seconds: int = 3600
     sheets_timeout_seconds: float = 8.0
     sheets_max_retries: int = 3

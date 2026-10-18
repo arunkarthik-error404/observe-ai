@@ -131,7 +131,41 @@ class CallSession:
 class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, CallSession] = {}
+        # Failed identity attempts per phone number, surviving the call they
+        # happened on. `auth_attempts` lives on CallSession, which dies when
+        # the caller hangs up — so three wrong dates of birth, a redial, and
+        # three more was unlimited guessing against a known number. Entries
+        # are (count, last_attempt_at) and age out on the same sweep.
+        #
+        # Process-local, like everything else here. A second replica has its
+        # own counter, so this raises the cost of guessing rather than capping
+        # it; a real lockout needs the shared store that `CallSession` also
+        # wants. Named honestly for that reason.
+        self._attempts_by_number: dict[str, tuple[int, float]] = {}
         self._lock = threading.Lock()
+
+    def note_failed_attempt(self, phone: str) -> int:
+        """Count one failure against a number. Returns the running total."""
+        if not phone:
+            return 0
+        with self._lock:
+            count, _ = self._attempts_by_number.get(phone, (0, 0.0))
+            count += 1
+            self._attempts_by_number[phone] = (count, time.time())
+            return count
+
+    def attempts_for_number(self, phone: str) -> int:
+        if not phone:
+            return 0
+        with self._lock:
+            return self._attempts_by_number.get(phone, (0, 0.0))[0]
+
+    def clear_attempts(self, phone: str) -> None:
+        """A successful verification forgives the number's history."""
+        if not phone:
+            return
+        with self._lock:
+            self._attempts_by_number.pop(phone, None)
 
     def get(self, call_id: str) -> CallSession:
         """Fetch or create. Tool calls can arrive before any status webhook."""
@@ -156,12 +190,29 @@ class SessionStore:
         with self._lock:
             self._sessions.pop(call_id, None)
 
+    def reset(self) -> None:
+        """Clear everything, including the per-number attempt history.
+
+        Tests need this: that history deliberately outlives a call, so without
+        it one test's wrong guesses count against the next test using the same
+        fixture number, and the suite locks itself out partway through.
+        """
+        with self._lock:
+            self._sessions.clear()
+            self._attempts_by_number.clear()
+
     def _sweep_locked(self) -> None:
         ttl = settings().session_ttl_seconds
         cutoff = time.time() - ttl
         for call_id, session in list(self._sessions.items()):
             if session.updated_at < cutoff:
                 del self._sessions[call_id]
+        # Deliberately the same TTL: a number the agent has not heard from in
+        # an hour starts fresh, so a shared office line is not locked out by
+        # yesterday's wrong guesses.
+        for phone, (_, last) in list(self._attempts_by_number.items()):
+            if last < cutoff:
+                del self._attempts_by_number[phone]
 
 
 store = SessionStore()

@@ -46,7 +46,12 @@ EMAIL = re.compile(r"\b[\w.+%-]+@[\w-]+\.[\w.-]+\b")
 PHONE_KEYS = {"phone", "caller_phone", "phone_number", "claimed_phone",
               "callback_number", "from_number", "to_number", "support_phone",
               "transfer_phone_number"}
-NAME_KEYS = {"name", "caller_name", "customer_name", "full_name", "preferred_name"}
+NAME_KEYS = {"name", "caller_name", "customer_name", "full_name", "preferred_name",
+             # The debug snapshot's own spellings. `customer` is the verified
+             # identity and `candidate` the account a phone number matched —
+             # which leaks whether an account exists for a number even when
+             # nobody verified.
+             "customer", "candidate", "greeting_name"}
 DOB_KEYS = {"date_of_birth", "dob", "birthdate", "birth_date"}
 EMAIL_KEYS = {"email", "email_address"}
 ACCOUNT_KEYS = {"policy_id", "policy_number"}
@@ -128,6 +133,57 @@ def redact(value: Any, key: str = "") -> Any:
     if lowered in ACCOUNT_KEYS:
         return mask_account(value)
     return scrub_text(value)
+
+
+def redact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """A call snapshot safe to serve over HTTP.
+
+    `redact()` works by key, which covers the structured fields but not prose.
+    Tool instructions are generated with the caller's first name inside them —
+    "Thanks, Marcus, you're all verified" — so the name walks straight past a
+    key-based pass. Here the name is known, so it can be struck from every
+    string as well.
+
+    This exists because `/debug/calls` had no authentication and returned
+    `tool_events` with raw arguments, and `verify_identity`'s argument is the
+    caller's date of birth. Phone number plus date of birth is exactly the pair
+    this system treats as credentials, and it was readable by anyone, live,
+    during a call.
+    """
+    names: set[str] = set()
+    for key in ("customer", "candidate"):
+        full = snapshot.get(key)
+        if isinstance(full, str) and full.strip():
+            names.add(full.strip())
+            names.update(part for part in full.split() if len(part) > 2)
+
+    redacted = redact(snapshot)
+
+    # `name` is in NAME_KEYS, which is the right default for a log line but
+    # wrong here: a tool event's `name` is the tool's, not a person's, and
+    # masking it turned the timeline into "V." and "L.". The generic pass stays
+    # conservative and the caller, which knows this shape, puts them back.
+    for event, original in zip(redacted.get("tool_events", []),
+                               snapshot.get("tool_events", []), strict=False):
+        if isinstance(event, dict) and isinstance(original, dict):
+            event["name"] = original.get("name", "")
+
+    if not names:
+        return redacted
+    # Longest first, so "Marcus Webb" is replaced before "Marcus" can split it.
+    patterns = sorted(names, key=len, reverse=True)
+
+    def strike(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: strike(v) for k, v in value.items()}
+        if isinstance(value, list | tuple):
+            return [strike(v) for v in value]
+        if isinstance(value, str):
+            for name in patterns:
+                value = re.sub(rf"\b{re.escape(name)}\b", "[name]", value)
+        return value
+
+    return strike(redacted)
 
 
 class RedactingFilter(logging.Filter):
