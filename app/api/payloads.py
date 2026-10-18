@@ -9,6 +9,8 @@ it means a change at Vapi's end touches one file.
 from __future__ import annotations
 
 import json
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from ..models import normalize_phone
@@ -166,22 +168,61 @@ def response_latencies(message: dict[str, Any]) -> list[dict[str, Any]]:
     return turns
 
 
+# Below this, a median is one or two turns and the difference between two
+# medians is noise. The tool-vs-no-tool comparison is withheld rather than
+# shown with a caveat, because a number on a dashboard gets quoted.
+MIN_TURNS_TO_COMPARE = 4
+
+
+@lru_cache
+def endpointing_floor_ms() -> int:
+    """The wait a turn cannot be faster than, read from the agent config.
+
+    Reported alongside the percentiles because without it the percentiles are
+    unreadable: p50 of 2220ms looks like a slow agent until you know 2200ms of
+    it is a pause this project deliberately bought. `onNoPunctuationSeconds` is
+    the floor for an ordinary turn — digits get a shorter one, a clean sentence
+    end shorter still, so this is the common case and not the minimum.
+
+    Returns 0 if the config is not on disk, and the console then omits it
+    rather than showing a floor it cannot stand behind.
+    """
+    path = Path(__file__).resolve().parents[2] / "vapi" / "agents.json"
+    try:
+        plan = json.loads(path.read_text(encoding="utf-8"))["defaults"]["startSpeakingPlan"]
+        wait = float(plan.get("waitSeconds") or 0)
+        no_punct = float(plan["transcriptionEndpointingPlan"]["onNoPunctuationSeconds"])
+    except Exception:  # noqa: BLE001 - a missing config must not break a webhook
+        return 0
+    return round((wait + no_punct) * 1000)
+
+
 def latency_summary(message: dict[str, Any]) -> dict[str, Any]:
-    """p50/p95 over a call. Small sample, so the percentiles are indicative —
-    the max is usually the one worth looking at."""
+    """p50/p95 over a call, against the floor they should be read relative to.
+
+    Small sample, so the percentiles are indicative — the max is usually the
+    one worth looking at.
+    """
     turns = response_latencies(message)
     if not turns:
         return {}
     values = sorted(t["latency_ms"] for t in turns)
-    tool_turns = [t["latency_ms"] for t in turns if t["tool"]]
-    plain = [t["latency_ms"] for t in turns if not t["tool"]]
+    tool_turns = sorted(t["latency_ms"] for t in turns if t["tool"])
+    plain = sorted(t["latency_ms"] for t in turns if not t["tool"])
+    # Both sides need enough turns to have a median worth subtracting. A live
+    # call compared two tool turns against seven without and produced a
+    # -1260ms "tool overhead" that was pure sampling noise.
+    comparable = len(tool_turns) >= MIN_TURNS_TO_COMPARE and len(plain) >= MIN_TURNS_TO_COMPARE
     return {
         "turns": len(values),
         "p50_ms": _percentile(values, 0.50),
         "p95_ms": _percentile(values, 0.95),
         "max_ms": values[-1],
-        "with_tool_ms": _percentile(sorted(tool_turns), 0.50) if tool_turns else None,
-        "without_tool_ms": _percentile(sorted(plain), 0.50) if plain else None,
+        "floor_ms": endpointing_floor_ms(),
+        "with_tool_ms": _percentile(tool_turns, 0.50) if comparable else None,
+        "without_tool_ms": _percentile(plain, 0.50) if comparable else None,
+        "tool_turns": len(tool_turns),
+        "plain_turns": len(plain),
     }
 
 

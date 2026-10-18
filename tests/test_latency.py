@@ -53,7 +53,9 @@ def test_a_turn_that_ran_a_tool_is_marked_as_one():
     assert turns[0]["latency_ms"] == 1200
 
 
-def test_the_summary_separates_tool_turns_from_the_rest():
+def test_the_summary_counts_tool_turns_but_will_not_compare_three_of_them():
+    """The split is always counted; the medians are only published once both
+    sides have enough turns to have a median worth subtracting."""
     payload = report([
         msg("user", 0, 1_000), msg("bot", 2_000, 3_000),                       # 1000
         msg("user", 4_000, 5_000), msg("tool_calls", 5_200), msg("bot", 7_000, 8_000),  # 2000
@@ -62,8 +64,8 @@ def test_the_summary_separates_tool_turns_from_the_rest():
     summary = payloads.latency_summary(payload)
     assert summary["turns"] == 3
     assert summary["max_ms"] == 2000
-    assert summary["with_tool_ms"] == 2000
-    assert summary["without_tool_ms"] in (1000, 1500)
+    assert summary["tool_turns"] == 1 and summary["plain_turns"] == 2
+    assert summary["with_tool_ms"] is None and summary["without_tool_ms"] is None
 
 
 def test_a_call_with_no_caller_turns_reports_nothing():
@@ -79,3 +81,53 @@ def test_malformed_timestamps_do_not_crash_the_webhook():
         msg("user", 0, 1_000), msg("bot", 1_500, 2_000),
     ])
     assert payloads.latency_summary(payload)["turns"] == 1
+
+
+# --- reading the numbers against the floor they sit on ---------------------
+def test_the_endpointing_floor_is_read_from_the_agent_config():
+    """p50 of 2220ms reads as a slow agent until you know 2200ms of it is a
+    pause this project deliberately configured. The floor is derived rather
+    than written down twice, so retuning the wait cannot leave it stale."""
+    import json
+
+    from app.api.payloads import endpointing_floor_ms
+
+    plan = json.load(open("vapi/agents.json", encoding="utf-8"))["defaults"]["startSpeakingPlan"]
+    expected = round((plan["waitSeconds"]
+                      + plan["transcriptionEndpointingPlan"]["onNoPunctuationSeconds"]) * 1000)
+    assert endpointing_floor_ms() == expected
+    assert expected > 0
+
+
+def _summary(with_tool: int, without: int) -> dict:
+    """A report with a chosen mix of turns, each a clean 2000ms gap."""
+    messages, at = [], 0
+    for i in range(with_tool + without):
+        messages.append(msg("user", at, at + 1_000))
+        if i < with_tool:
+            messages.append(msg("tool_calls", at + 1_200))
+        messages.append(msg("bot", at + 3_000, at + 4_000))
+        at += 6_000
+    return payloads.latency_summary(report(messages))
+
+
+def test_a_tool_comparison_is_withheld_until_it_means_something():
+    """Two tool turns against seven produced a -1260ms "tool overhead" on a
+    live call — sampling noise, displayed in amber as though slower were the
+    worry. A number on a dashboard gets quoted, so it is withheld instead."""
+    from app.api.payloads import MIN_TURNS_TO_COMPARE
+
+    thin = _summary(with_tool=2, without=7)
+    assert thin["with_tool_ms"] is None
+    assert thin["without_tool_ms"] is None
+    assert thin["tool_turns"] == 2 and thin["plain_turns"] == 7
+
+    enough = _summary(with_tool=MIN_TURNS_TO_COMPARE, without=MIN_TURNS_TO_COMPARE)
+    assert enough["with_tool_ms"] is not None
+    assert enough["without_tool_ms"] is not None
+
+
+def test_the_summary_carries_the_floor_so_the_console_need_not_guess():
+    from app.api.payloads import endpointing_floor_ms
+
+    assert _summary(4, 4)["floor_ms"] == endpointing_floor_ms()

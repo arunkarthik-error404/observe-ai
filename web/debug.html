@@ -141,23 +141,50 @@ function latencyBlock(c) {
       <div class="pending">waiting for the end-of-call report — this is measured from the
       finished transcript, so it lands a few seconds after the caller hangs up.</div>`;
   }
-  const band = ms => ms < 2000 ? "ok" : ms < 3000 ? "warn" : "bad";
-  const toolDelta = (l.with_tool_ms != null && l.without_tool_ms != null)
-    ? l.with_tool_ms - l.without_tool_ms : null;
+  // Banded against the endpointing floor, not against zero. A turn cannot be
+  // faster than the pause we configured before the agent is allowed to speak,
+  // so judging 2220ms as "slow" when 2200ms of it is that pause marks a
+  // deliberate design decision as a fault.
+  const floor = l.floor_ms || 0;
+  const band = ms => {
+    const over = ms - floor;
+    return over < 800 ? "ok" : over < 1500 ? "warn" : "bad";
+  };
+  const over = ms => floor ? `${ms - floor} ms above the floor` : "";
   const slowest = Math.max(0, ...(c.tool_events || []).map(e => e.duration_ms || 0));
 
-  const cells = [
-    ["turns measured", `${l.turns}`, "", ""],
-    ["p50", `${l.p50_ms} ms`, band(l.p50_ms), "half of turns were faster than this"],
-    ["p95", `${l.p95_ms} ms`, band(l.p95_ms), "small sample — treat as indicative"],
-    ["slowest turn", `${l.max_ms} ms`, band(l.max_ms), "the one worth looking at"],
-    ["turns with a tool", l.with_tool_ms != null ? `${l.with_tool_ms} ms` : "—", "", ""],
-    ["turns without", l.without_tool_ms != null ? `${l.without_tool_ms} ms` : "—", "", ""],
-  ];
-  if (toolDelta !== null) {
-    cells.push(["tool overhead", `${toolDelta >= 0 ? "+" : ""}${toolDelta} ms`,
-      Math.abs(toolDelta) < 500 ? "ok" : "warn",
-      `our slowest tool this call: ${Math.round(slowest)} ms — the rest is endpointing and TTS`]);
+  const cells = [["turns measured", `${l.turns}`, "", ""]];
+  if (floor) {
+    cells.push(["endpointing floor", `${floor} ms`, "",
+      "the pause we wait before the agent may speak — no turn can beat it"]);
+  }
+  cells.push(
+    ["p50", `${l.p50_ms} ms`, band(l.p50_ms), over(l.p50_ms) || "half of turns were faster"],
+    ["slowest turn", `${l.max_ms} ms`, band(l.max_ms),
+     over(l.max_ms) ? `${over(l.max_ms)} — model and TTS` : "the one worth looking at"],
+  );
+  // p95 only when it says something the max does not. Under about 20 turns it
+  // rounds to the maximum and is a second copy of the number beside it.
+  if (l.p95_ms !== l.max_ms) {
+    cells.push(["p95", `${l.p95_ms} ms`, band(l.p95_ms), "small sample — indicative"]);
+  }
+
+  // Withheld below a usable sample: see MIN_TURNS_TO_COMPARE. A median of two
+  // turns against a median of seven produced a -1260ms "tool overhead" that
+  // was sampling noise, shown in amber as though slower were the worry.
+  if (l.with_tool_ms != null && l.without_tool_ms != null) {
+    const delta = l.with_tool_ms - l.without_tool_ms;
+    cells.push(
+      ["turns with a tool", `${l.with_tool_ms} ms`, "", `${l.tool_turns} turns`],
+      ["turns without", `${l.without_tool_ms} ms`, "", `${l.plain_turns} turns`],
+      // Negative means tool turns were faster. That is never a warning.
+      ["tool overhead", `${delta >= 0 ? "+" : ""}${delta} ms`, delta < 500 ? "ok" : "warn",
+       `slowest tool this call: ${Math.round(slowest)} ms`],
+    );
+  } else {
+    cells.push(["tool overhead", "not enough turns", "",
+      `${l.tool_turns || 0} with a tool, ${l.plain_turns || 0} without — too few to compare` +
+      (slowest ? `. Slowest tool: ${Math.round(slowest)} ms` : "")]);
   }
 
   return `<h2>caller-perceived latency</h2><div class="grid">` + cells.map(
