@@ -1213,3 +1213,44 @@ def test_the_ticket_id_is_stable_across_restarts():
     expected = int(hashlib.sha256(call_id.encode()).hexdigest()[:8], 16) % 9000 + 1000
     assert ticket == f"ESC-{expected}"
     assert len(ticket) == len("ESC-0000")  # still four digits, still sayable
+
+
+# --- retrieval: confident, and ambiguous ----------------------------------
+def test_two_topics_matching_equally_produces_a_question_not_a_guess():
+    """A single threshold can say "weak" but not "confident, and ambiguous".
+    "how do i send you the paper work" scores 57.8 against both Mailing
+    address and How to submit documents, and picking the first of two equals
+    presents a coin toss to the caller as an answer."""
+    result = tool(new_call(), "search_knowledge_base",
+                  query="how do i send you the paper work")
+
+    assert result["found"] is False
+    assert result["reason"] == "ambiguous"
+    assert result["margin"] < 8.0
+    assert set(result["options"]) == {"Mailing address", "How to submit documents"}
+    instruction = result["instruction"].lower()
+    assert "do not pick one" in instruction
+    assert "ask them which they mean" in instruction
+    # Asked in the caller's words, not ours.
+    assert "in plain words rather than these titles" in instruction
+
+
+def test_a_clear_winner_is_still_answered_outright():
+    """The clarification branch has to be surgical. If it fires on ordinary
+    questions it has traded one failure for a more annoying one."""
+    result = tool(new_call(), "search_knowledge_base", query="how do I upload my photos")
+    assert result["found"] is True
+    assert result["topic"] == "How to submit documents"
+    assert result["margin"] >= 8.0
+
+
+def test_the_keyword_override_is_visible_as_itself():
+    """A keyword hit forced to 92.0 and a genuine fuzzy match at 92.0 were
+    indistinguishable downstream, which matters now that the margin check
+    reads those scores: two keyword hits tie at 92 and are genuinely
+    ambiguous, while a keyword hit over a weak field is not."""
+    result = tool(new_call(), "search_knowledge_base", query="what are your office hours")
+    assert result["found"] is True
+    top = result["candidates"][0]
+    assert top["exact_keyword"] is True
+    assert top["score"] == 92.0

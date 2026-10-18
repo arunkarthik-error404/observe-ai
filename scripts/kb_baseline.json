@@ -1,0 +1,61 @@
+{
+  "min_score": 52.0,
+  "sets": [
+    {
+      "set": "must_answer",
+      "cases": 54,
+      "recall@1": 0.852,
+      "recall@3": 0.87,
+      "mrr": 0.869,
+      "false_refusal_rate": 0.204,
+      "clarify_rate": 0.0,
+      "margin_p50": 42.0,
+      "margin_min": 0.7
+    },
+    {
+      "set": "stt_noise",
+      "cases": 20,
+      "recall@1": 0.75,
+      "recall@3": 0.95,
+      "mrr": 0.852,
+      "false_refusal_rate": 0.35,
+      "clarify_rate": 0.1,
+      "margin_p50": 16.5,
+      "margin_min": 0.0
+    },
+    {
+      "set": "near_miss",
+      "cases": 12,
+      "recall@1": 0.833,
+      "recall@3": 0.833,
+      "mrr": 0.85,
+      "false_refusal_rate": 0.25,
+      "clarify_rate": 0.083,
+      "margin_p50": 19.5,
+      "margin_min": 0.0
+    },
+    {
+      "set": "must_refuse",
+      "cases": 15,
+      "refusal_rate": 0.933,
+      "clarify_rate": 0.067
+    },
+    {
+      "set": "held_out",
+      "cases": 11,
+      "recall@1": 0.545,
+      "recall@3": 0.636,
+      "mrr": 0.627,
+      "false_refusal_rate": 0.636,
+      "clarify_rate": 0.091,
+      "margin_p50": 7.0,
+      "margin_min": 0.1
+    },
+    {
+      "set": "held_out_refuse",
+      "cases": 3,
+      "refusal_rate": 1.0,
+      "clarify_rate": 0.0
+    }
+  ]
+}

@@ -26,6 +26,23 @@ from ..models import speakable
 KB_PATH = Path(__file__).parent / "faq.md"
 MIN_SCORE = 52.0  # tuned against the recall/leak fixtures in scripts/check_kb.py
 
+# How far clear of the runner-up the winner has to be. A single threshold can
+# say "weak" but cannot say "confident, and ambiguous" — and that second thing
+# is what broke a live call, where "how do I add a photo to an existing claim"
+# matched "How to start a new claim" at 55.9 and the agent answered it.
+#
+# The fixtures are full of ties: "how do i send you the paper work" scores
+# 57.8 against both Mailing address and How to submit documents, and "what's
+# the status of my claim" scores 43.2 against two entries at once. Picking the
+# first of two equals is a coin toss presented to the caller as an answer.
+#
+# Patched in the prompt first — an instruction telling the model to notice the
+# match was wrong. That is the thing this codebase refuses to do everywhere
+# else: `requires_auth` does not ask the model to respect the gate, it closes
+# it. So the decision moves back to the server, and the fourth outcome is a
+# clarifying question, which is what a human agent would ask anyway.
+MIN_MARGIN = 8.0
+
 # The written-to-spoken transform lives in `models` alongside `spoken_amount`,
 # because the knowledge base is not the only place a screen-shaped string
 # reaches the voice — the claim record and the document channels do it too.
@@ -84,14 +101,22 @@ def search(query: str, top_k: int = 3) -> dict:
         # a 4-letter keyword partial-matches almost any sentence.
         score = float(fuzz.token_set_ratio(q, entry.haystack))
         # An exact spoken phrase is strong evidence; the length floor keeps
-        # stopword-ish keywords from firing it.
-        if any(len(kw) >= 6 and kw in q for kw in entry.keywords):
+        # stopword-ish keywords from firing it. Tracked separately as well as
+        # folded into the score, because the two are not the same evidence:
+        # downstream, a keyword hit at 92 and a fuzzy match at 92 were
+        # indistinguishable, and the margin check below needs to tell them
+        # apart — two keyword hits tie at 92 and are genuinely ambiguous.
+        exact = any(len(kw) >= 6 and kw in q for kw in entry.keywords)
+        if exact:
             score = max(score, 92.0)
-        scored.append((score, entry))
-    scored.sort(key=lambda pair: pair[0], reverse=True)
+        scored.append((score, entry, exact))
+    scored.sort(key=lambda triple: triple[0], reverse=True)
 
-    candidates = [{"title": e.title, "score": round(float(s), 1)} for s, e in scored[:top_k]]
-    best_score, best = scored[0]
+    candidates = [{"title": e.title, "score": round(float(s), 1), "exact_keyword": x}
+                  for s, e, x in scored[:top_k]]
+    best_score, best, _ = scored[0]
+    runner_up = scored[1][0] if len(scored) > 1 else 0.0
+    margin = round(float(best_score - runner_up), 1)
     if best_score < MIN_SCORE:
         return {
             "found": False,
@@ -106,9 +131,34 @@ def search(query: str, top_k: int = 3) -> dict:
                 "callback."
             ),
         }
+
+    # Confident, but about two things at once. The fourth outcome: ask, the way
+    # a person would, instead of picking the first of two equals and presenting
+    # a coin toss as an answer.
+    if margin < MIN_MARGIN:
+        second = scored[1][1]
+        return {
+            "found": False,
+            "reason": "ambiguous",
+            "score": round(float(best_score), 1),
+            "margin": margin,
+            "options": [best.title, second.title],
+            "candidates": candidates,
+            "instruction": (
+                f"Two different topics match this about equally — {best.title!r} and "
+                f"{second.title!r} — so there is no way to tell which one the caller meant. "
+                "Do not pick one. Ask them which they mean, in one short question, in plain "
+                "words rather than these titles: something like \"are you asking about sending "
+                "documents in, or about where to post them?\" Then call this tool again with "
+                "their answer. If they clarify and it still does not match, say it is not "
+                "something you can confirm on this line and offer a representative."
+            ),
+        }
+
     return {
         "found": True,
         "topic": best.title,
+        "margin": margin,
         # The spoken form is the only one returned, so there is no second
         # string for the model to read out by mistake. faq.md stays the single
         # written source of truth.
