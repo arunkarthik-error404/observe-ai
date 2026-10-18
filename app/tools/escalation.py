@@ -121,7 +121,13 @@ def escalate_to_human(session: CallSession, args: dict[str, Any]) -> dict[str, A
         "urgency": urgency,
         "notes": notes,
         "caller_phone": session.claimed_phone,
-        "callback_number": session.callback_number,
+        # The number to ring, not only one volunteered for the purpose. This
+        # read the raw field, so a live ticket went to Slack with
+        # callback_number "" while the tool result beside it carried the
+        # caller's number — the message was still right, because
+        # `_number_to_dial` falls back to caller_phone, but anyone reading the
+        # logged handoff saw a blank where a number was.
+        "callback_number": _number_to_ring(session),
         "identity_verified": session.authenticated,
         "customer_name": session.customer.full_name if session.customer else "unverified",
         "policy_id": session.customer.policy_id if session.customer else "",
@@ -219,16 +225,25 @@ def record_callback_number(session: CallSession, args: dict[str, Any]) -> dict[s
             ),
         }
 
+    # What a human would already be looking at, captured before the write.
+    already_on_ticket = _number_to_ring(session)
     session.callback_number = number
     log.info("callback_number_recorded",
              extra={"call_id": session.call_id, "ticket": session.ticket_id,
-                    "callback_number": number})
+                    "callback_number": number, "changed": number != already_on_ticket})
 
     # Only worth a Slack follow-up once a ticket is open — otherwise there is
     # no handoff for a human to attach it to, and the number still reaches the
     # post-call record either way.
+    #
+    # And only when the number actually changed. The escalation instruction
+    # says to call this tool if the caller gives a *different* number, but on a
+    # live call the caller confirmed the one read back to them and the model
+    # called it anyway — posting a second Slack message telling a human to ring
+    # a number already on the card. A notification that carries no new
+    # information trains people to stop reading them.
     notified = False
-    if session.ticket_id:
+    if session.ticket_id and number != already_on_ticket:
         notified = notify_callback_number({
             "ticket_id": session.ticket_id,
             "callback_number": number,
@@ -241,10 +256,15 @@ def record_callback_number(session: CallSession, args: dict[str, Any]) -> dict[s
         "callback_number": number,
         "ticket_id": session.ticket_id,
         "notified": notified,
+        # A read-back the caller has already given is not reassurance, it is
+        # the call not ending. Only ask for one when the number is new.
         "instruction": (
             "Saved. Read the number back one digit at a time, confirm it is right, and tell them a "
             "representative will call them on it. If they correct it, call this tool again with the "
             "new number."
+            if number != already_on_ticket
+            else "That is the number already on the ticket, so nothing changed. Do not read it back "
+            "again — the caller has confirmed it. Say it is logged and move on to closing the call."
         ),
     }
 

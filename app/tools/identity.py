@@ -134,6 +134,9 @@ def verify_identity(session: CallSession, args: dict[str, Any]) -> dict[str, Any
         "instruction": (
             "Identity could not be verified after the maximum attempts. Do not discuss any claim "
             "detail. Explain that for the account's protection you cannot continue over this line, "
-            "then hand the caller to a representative."
+            "then call `escalate_to_human` with reason `authentication_failed`. Say nothing about "
+            "what happens next until that tool answers — it is what decides whether anyone can "
+            "take the call right now, and 'I'll transfer you' followed by 'actually, the team is "
+            "closed' is worse for the caller than a short silence."
         ),
     }

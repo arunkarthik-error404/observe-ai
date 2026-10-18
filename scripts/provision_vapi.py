@@ -99,10 +99,19 @@ def tool_payload(name: str, spec: dict[str, Any], server_url: str, secret: str) 
         # Per-tool server config keeps every tool on one endpoint and one secret.
         "server": {"url": webhook_url(server_url, secret), "secret": secret, "timeoutSeconds": 15},
     }
-    if spec.get("request_start"):
-        # Spoken the instant the tool fires, so a 300ms lookup never sounds like
-        # dead air. This is perceived-latency work, not real latency work.
-        payload["messages"] = [{"type": "request-start", "content": spec["request_start"]}]
+    # Spoken the instant the tool fires, so a 300ms lookup never sounds like
+    # dead air. This is perceived-latency work, not real latency work.
+    #
+    # Always sent, empty list included. A tool update is a PATCH, so omitting
+    # the key leaves whatever is already on Vapi — meaning deleting a
+    # `request_start` from this file would change nothing on an already
+    # provisioned tool, and the agent would keep speaking a filler no longer in
+    # the config. Configuration-as-code only holds if removing a line removes
+    # the behaviour.
+    start = spec.get("request_start")
+    payload["messages"] = (
+        [{"type": "request-start", "content": start}] if start else []
+    )
     return payload
 
 

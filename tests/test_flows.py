@@ -453,6 +453,69 @@ def test_a_volunteered_number_is_captured_by_the_escalation_itself():
     assert escalation["handoff_context"]["callback_number"] == "8072593908"
 
 
+def test_the_handoff_carries_the_caller_id_when_no_number_was_volunteered():
+    """A live ticket went to Slack with callback_number "" while the result
+    beside it carried the caller's number. The message was still correct —
+    the notifier falls back to caller_phone — but the logged handoff showed a
+    blank where a human was looking for a number to ring."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-418-4492")
+    escalation = tool(call_id, "escalate_to_human", reason="authentication_failed")
+    assert escalation["handoff_context"]["callback_number"] == "5554184492"
+    assert escalation["callback_number"] == "5554184492"  # and the two agree
+
+
+def test_confirming_the_number_already_on_the_ticket_does_not_notify_again(monkeypatch):
+    """The escalation says to call this tool if the caller gives a *different*
+    number. On a live call the caller confirmed the one read back to them and
+    the model called it anyway, posting a second Slack message telling a human
+    to ring a number already on the card."""
+    from app.tools import escalation
+
+    posted: list[dict[str, Any]] = []
+    monkeypatch.setattr(escalation, "notify_callback_number",
+                        lambda ctx: posted.append(ctx) is None)
+
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-418-4492")
+    tool(call_id, "escalate_to_human", reason="authentication_failed")
+
+    same = tool(call_id, "record_callback_number", callback_number="555-418-4492")
+    assert same["ok"] is True
+    assert same["notified"] is False
+    assert posted == []  # nothing was even handed to the notifier
+    assert "do not read it back again" in same["instruction"].lower()
+
+    # A genuinely new number still reaches the human.
+    changed = tool(call_id, "record_callback_number", callback_number="807-259-3908")
+    assert changed["notified"] is True
+    assert [p["callback_number"] for p in posted] == ["8072593908"]
+    assert "read the number back" in changed["instruction"].lower()
+
+
+def test_lockout_does_not_let_the_agent_promise_a_transfer():
+    """A live call heard "I'll transfer you to someone who can help" and then,
+    once `escalate_to_human` answered, "the team is currently closed". The
+    lockout instruction said "hand the caller to a representative", which the
+    model spoke as a promise — before the tool that decides had run."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-418-4492")
+    for dob in ("1970-01-01", "1971-01-01", "1972-01-01"):
+        locked = tool(call_id, "verify_identity", date_of_birth=dob)
+    instruction = locked["instruction"].lower()
+
+    assert "escalate_to_human" in instruction
+    # The old wording. "Hand the caller to a representative" is what the model
+    # spoke as a promise; the word "transfer" still appears here, but only
+    # inside the counter-example telling it not to.
+    assert "hand the caller to a representative" not in instruction
+    for directive in ("transfer the call", "transfer them", "transfer the caller"):
+        assert directive not in instruction
+    # The point is the ordering, not the wording: nothing about what happens
+    # next may be said until the tool has decided what is possible.
+    assert "until that tool answers" in instruction
+
+
 def test_no_tool_asks_the_model_for_its_own_goodbye():
     """Vapi's endCallMessage is the only sign-off. A live call heard two:
     "Thank you for calling Observe Insurance. Have a great day! Goodbye!" and
