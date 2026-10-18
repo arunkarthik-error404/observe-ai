@@ -149,7 +149,13 @@ def speakable(text: str) -> str:
         or m.group(0), text)
     text = _PHONE.sub(lambda m: ", ".join(" ".join(g) for g in m.groups()), text)
     text = _EMAIL.sub(lambda m: f"{m.group(1)} at {m.group(2).replace('.', ' dot ')}", text)
-    text = _URL.sub(lambda m: f"{m.group(1).replace('.', ' dot ')} slash {m.group(2)}", text)
+    # "forward slash" rather than "slash", and set off by commas. The bare word
+    # was dropped twice on live calls — "observeinsurance dot com upload" —
+    # which is an address the caller cannot type. A one-syllable function word
+    # mid-phrase is the easiest thing in a sentence to swallow; the longer
+    # token and the prosodic break on either side both make it survive.
+    text = _URL.sub(
+        lambda m: f"{m.group(1).replace('.', ' dot ')}, forward slash, {m.group(2)}", text)
     text = _DOMAIN.sub(lambda m: f"{m.group(1)} dot {m.group(2)}", text)
     return " ".join(text.split())
 

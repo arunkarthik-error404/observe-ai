@@ -271,7 +271,7 @@ def test_adding_a_photo_routes_to_document_submission():
         assert result["found"] is True, question
         assert result["topic"] == "How to submit documents", question
         # Spoken form: the portal is still the channel it points at.
-        assert "observeinsurance dot com slash upload" in result["answer"]
+        assert "observeinsurance dot com, forward slash, upload" in result["answer"]
 
 
 def test_a_confident_match_still_tells_the_agent_to_check_it_fits():
@@ -967,7 +967,7 @@ def test_an_email_address_and_a_fax_number_are_rewritten_for_the_voice():
     assert "@" not in answer
     assert "claims at observeinsurance dot com" in answer
     assert "9 1 6, 5 5 5, 0 1 8 8" in answer
-    assert "observeinsurance dot com slash upload" in answer
+    assert "observeinsurance dot com, forward slash, upload" in answer
 
     # The transform itself, independent of any one entry.
     assert speakable("mail a@b.com") == "mail a at b dot com"
@@ -1073,3 +1073,47 @@ def test_the_claim_instruction_names_the_figure_forms_it_forbids():
     assert "never \"12 October\"" in instruction
     # The stale key it used to name is gone along with the field itself.
     assert "never amount" not in instruction.lower()
+
+
+def test_a_url_path_survives_being_spoken():
+    """"slash" was dropped twice on live calls, leaving "observeinsurance dot
+    com upload" — an address the caller cannot type. A one-syllable function
+    word mid-phrase is the easiest thing in a sentence to swallow."""
+    from app.models import speakable
+
+    assert speakable("go to observeinsurance.com/upload") == (
+        "go to observeinsurance dot com, forward slash, upload")
+    # A bare domain is left as a domain.
+    assert speakable("visit observeinsurance.com") == "visit observeinsurance dot com"
+
+
+def test_instant_tools_tell_the_model_not_to_announce_them():
+    """Three live calls said "this will just take a sec" in front of tools that
+    answer in under ten milliseconds. Two prompt sections failed to stop it, so
+    the rule moves onto the tool descriptions — what the model reads at the
+    moment it decides to call."""
+    import json
+
+    cfg = json.load(open("vapi/agents.json", encoding="utf-8"))
+    for name, spec in cfg["tools"].items():
+        if name.startswith("_"):
+            continue
+        description = spec["description"]
+        if spec.get("request_start"):
+            # These two reach the claims system and Vapi speaks a line itself;
+            # telling the model to stay silent would contradict what the caller
+            # is already hearing.
+            assert "say nothing before calling it" not in description, name
+        else:
+            assert "say nothing before calling it" in description, name
+
+
+def test_the_last_tool_before_hangup_forbids_a_parting_filler():
+    """`log_interaction` runs immediately before the call ends, which makes it
+    the last thing that can be said to the model before "Give me a moment." and
+    then the sign-off."""
+    call_id = new_call()
+    instruction = tool(call_id, "log_interaction", outcome="status_provided",
+                       summary="Checked a claim.", sentiment="neutral")["instruction"].lower()
+    assert "put nothing in front of ending it" in instruction
+    assert "nobody is waiting" in instruction

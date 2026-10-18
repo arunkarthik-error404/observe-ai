@@ -75,6 +75,14 @@ def log_interaction(session: CallSession, args: dict[str, Any]) -> dict[str, Any
             # endCallMessage, spoken when the call ends. Asking for one here
             # produced two farewells back to back on a live call.
             "Record saved. Close the call warmly: ask if there is anything else, and when they say "
-            "no, end the call. Do not say goodbye — the sign-off is spoken for you."
+            "no, end the call. Do not say goodbye — the sign-off is spoken for you. "
+            # This tool runs immediately before the call ends, which makes it
+            # the last place anything can be said to the model before the one
+            # filler it kept producing there. Three live calls ended "Give me a
+            # moment." / "Just a sec." and then the sign-off — a wait announced
+            # in front of a hang-up, with nothing being waited for.
+            "And put nothing in front of ending it: no \"just a sec\", no \"one moment\", no "
+            "\"give me a moment\". Nothing is loading and nobody is waiting. Their last answer, "
+            "then the call ends."
         ),
     }
