@@ -106,5 +106,20 @@ def search(query: str, top_k: int = 3) -> dict:
         "answer": best.answer,
         "score": round(float(best_score), 1),
         "candidates": candidates,
-        "instruction": "Answer using only the text in 'answer'. Shorten it for speech; do not add facts.",
+        # The third branch, added after a live call fell through the gap between
+        # the other two. `MIN_SCORE` only filters *weak* matches; it does nothing
+        # about a confident match on the wrong entry. "How to add a photo to an
+        # existing claim" scored 55.9 against "How to start a new claim" — well
+        # above the threshold and not an answer to the question. Told to use that
+        # text and nothing else, the model substituted its own answer instead,
+        # which is the one outcome this whole tool exists to prevent. So the
+        # near-miss now has an instruction of its own.
+        "instruction": (
+            "Answer using only the text in 'answer'. Shorten it for speech; do not add facts. "
+            "First check it actually answers what the caller asked: 'topic' is the entry this "
+            "matched, and a confident match can still be the wrong topic. If it does not answer "
+            "them, do not stretch it to fit and do not substitute an answer of your own — say it "
+            "is not something you can confirm on this line and offer a representative, exactly as "
+            "you would if nothing had been found."
+        ),
     }

@@ -66,8 +66,17 @@ def get_claim_status(session: CallSession, args: dict[str, Any]) -> dict[str, An
         "other_claims": [claim_brief(c) for c in claims if c.claim_id != focus.claim_id],
         "instruction": (
             "Tell the caller the status of the primary claim in one or two sentences, in plain "
-            "language, then the next step. Say the claim number only if they ask or if there is more "
-            "than one claim. If needs_documents is true, call get_document_instructions next. "
+            "language, then the next step. "
+            # The old wording stopped here, and on a live call the agent recited
+            # both of a caller's claims in full — every field of each. The
+            # caller rang about one of them; reading out the closed one too is
+            # a wall of speech they cannot skim.
+            "If claim_count is more than one, say how many there are first, give the primary "
+            "claim's status, then mention what the other one is in a single clause and let them "
+            "ask. Do not recite the details of more than one claim unless they ask. "
+            "Say a claim number only if they ask or if there is more than one claim. "
+            "When you say a money amount out loud, read amount_spoken, never amount. "
+            "If needs_documents is true, call get_document_instructions next. "
             "If the status is Denied, acknowledge that it is disappointing before explaining options."
         ),
     }

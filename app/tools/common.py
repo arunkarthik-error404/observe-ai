@@ -27,7 +27,7 @@ from functools import wraps
 from typing import Any
 
 from ..config import settings
-from ..models import Claim
+from ..models import Claim, spoken_amount
 from ..session import CallSession
 
 log = logging.getLogger("claims.tools")
@@ -110,6 +110,10 @@ def claim_brief(claim: Claim) -> dict[str, Any]:
         "status": claim.status,
         "status_detail": claim.status_detail,
         "amount": claim.amount,
+        # The same number twice, because the two have different jobs: `amount`
+        # is what a human reads in a log or a CRM record, `amount_spoken` is
+        # what the caller hears. See `spoken_amount`.
+        "amount_spoken": spoken_amount(claim.amount),
         "adjuster": claim.adjuster_name,
         "needs_documents": claim.needs_documents,
         "required_documents": claim.required_documents,

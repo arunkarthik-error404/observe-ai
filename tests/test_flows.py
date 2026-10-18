@@ -172,6 +172,52 @@ def test_escalation_carries_warm_handoff_context():
     assert escalation["transfer"] in {"live", "callback"}
 
 
+@pytest.mark.parametrize(
+    "formatted,spoken",
+    [
+        ("$310.00", "three hundred and ten dollars"),
+        ("$4,250.00", "four thousand two hundred and fifty dollars"),
+        ("$1,005.00", "one thousand and five dollars"),
+        ("$1.00", "one dollar"),
+        ("$12.50", "twelve dollars and fifty cents"),
+        ("$0.01", "zero dollars and one cent"),
+        ("", ""),                       # a claim with no amount yet
+        ("pending", ""),                # free text in the column
+    ],
+)
+def test_money_is_rendered_for_a_voice_not_a_screen(formatted, spoken):
+    from app.models import spoken_amount
+
+    assert spoken_amount(formatted) == spoken
+
+
+def test_an_amount_is_offered_in_words_for_the_voice_to_read():
+    """TTS read "$310.00" aloud as "three ten dollars" on a live call."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-418-4492")
+    tool(call_id, "verify_identity", date_of_birth="1965-02-28")
+    status = tool(call_id, "get_claim_status")
+    claim = status["primary_claim"]
+
+    assert claim["amount"] == "$4,250.00"                       # for a screen
+    assert claim["amount_spoken"] == "four thousand two hundred and fifty dollars"
+    assert "amount_spoken, never amount" in status["instruction"]
+
+
+def test_a_second_claim_is_mentioned_not_recited():
+    """A live call read out every field of both of Daniel's claims."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-234-1187")
+    tool(call_id, "verify_identity", date_of_birth="1979-11-03")
+    status = tool(call_id, "get_claim_status")
+
+    assert status["claim_count"] == 2
+    # The open claim leads; the paid one is secondary.
+    assert status["primary_claim"]["claim_id"] == "CLM-48201"
+    assert [c["claim_id"] for c in status["other_claims"]] == ["CLM-48118"]
+    assert "Do not recite the details of more than one claim" in status["instruction"]
+
+
 def test_authenticated_customer_with_no_claims():
     call_id = new_call()
     tool(call_id, "lookup_customer", phone_number="555-572-5513")
@@ -204,6 +250,31 @@ def test_kb_refuses_to_guess_out_of_scope_questions():
     )
     assert result["found"] is False
     assert result["reason"] == "no_confident_match"
+
+
+def test_adding_a_photo_routes_to_document_submission():
+    """A live call asked this and the KB matched "How to start a new claim" at
+    55.9 — above MIN_SCORE, and not an answer to the question. The model then
+    substituted its own ("contact your adjuster"), which is nowhere in the KB
+    and points the caller at the slowest channel."""
+    for question in ("How to add a photo to an existing claim?",
+                     "what do I do if I want to add a photo later",
+                     "can I send more photos"):
+        result = tool(new_call(), "search_knowledge_base", query=question)
+        assert result["found"] is True, question
+        assert result["topic"] == "How to submit documents", question
+        assert "observeinsurance.com/upload" in result["answer"]
+
+
+def test_a_confident_match_still_tells_the_agent_to_check_it_fits():
+    """MIN_SCORE filters weak matches; nothing filters a confident wrong one."""
+    result = tool(new_call(), "search_knowledge_base", query="what are your office hours")
+    assert result["found"] is True
+    instruction = result["instruction"]
+    assert "can still be the wrong topic" in instruction
+    # The near-miss must land on the refusal path, not on an invented answer.
+    assert "do not substitute an answer of your own" in instruction
+    assert "representative" in instruction
 
 
 @pytest.mark.parametrize(

@@ -35,7 +35,7 @@ business days of approval. A straightforward claim closes in seven to ten
 business days; claims needing an inspection or extra documents take longer.
 
 ## How to submit documents
-keywords: submit documents, upload, send paperwork, how do I send photos, email documents, fax, portal
+keywords: submit documents, upload, send paperwork, how do I send photos, email documents, fax, portal, add a photo, add photos, add more photos, additional photos, add documents, send more photos, upload later, attach a photo
 There are four ways to submit documents. The portal at
 observeinsurance.com/upload is fastest and posts to your claim within minutes.
 You can email them to claims@observeinsurance.com with your claim number in the
