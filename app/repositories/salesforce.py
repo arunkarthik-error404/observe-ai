@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -202,7 +203,17 @@ class SalesforceRepository(ClaimsRepository):
             # which one it is doing — so the second write of a call would fail
             # on a cosmetic field. CallDurationInSeconds already makes this
             # read as a logged call.
+            # Kept as well as Call_Timestamp__c, not replaced by it: ActivityDate
+            # is what files the Task on the right day in the activity timeline,
+            # which is where a human finds it.
             "ActivityDate": record.timestamp[:10] if record.timestamp else None,
+            # The time of day ActivityDate cannot hold. See `_sf_datetime`.
+            "Call_Timestamp__c": _sf_datetime(record.timestamp),
+            # WhoId covers this when the phone matched a Contact, and is the
+            # better handle where it exists — but it is absent for an
+            # unverified caller, which is exactly when a name on the record is
+            # all there is.
+            "Caller_Name__c": record.caller_name[:CALLER_NAME_LIMIT],
             "Call_Sentiment__c": record.sentiment,
             "Call_Intent__c": record.intent[:255],
             # The authoritative outcome. Subject still carries it for the
@@ -273,6 +284,32 @@ class SalesforceRepository(ClaimsRepository):
 
 
 DESCRIPTION_LIMIT = 32_000  # Task.Description is a 32,768-char long text area
+CALLER_NAME_LIMIT = 121     # Contact Name's own length: FirstName 40 + " " + LastName 80
+
+
+def _sf_datetime(raw: str) -> str:
+    """An ISO 8601 instant Salesforce will accept, or "" if it cannot be read.
+
+    Empty rather than passed through, because the body filter drops empty
+    values and a malformed datetime fails the whole upsert with INVALID_FIELD.
+    Losing the entire call record over the one field on it that nothing reads
+    back would be a bad trade — the same reason sentiment coerces instead of
+    raising.
+
+    `endedAt` arrives from Vapi, so its exact shape is the provider's choice:
+    seen with and without a trailing `Z`, and with fractional seconds.
+    """
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        log.warning("call_timestamp_unparsed", extra={"value": value[:40]})
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.isoformat(timespec="seconds")
 
 
 def _description(record: InteractionRecord) -> str:

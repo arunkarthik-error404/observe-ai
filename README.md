@@ -240,6 +240,13 @@ python scripts/setup_salesforce.py --all   # custom fields, FLS, seed data
 python scripts/setup_salesforce.py --check # verify the org is ready
 ```
 
+Re-run `--all` after pulling a change that adds a Task field — it is idempotent,
+skipping what exists and granting field permissions either way. This matters
+because Salesforce rejects a PATCH naming a field the org does not have, and it
+rejects the *whole* body: an org provisioned before `Caller_Name__c` and
+`Call_Timestamp__c` existed will fail every post-call write with `INVALID_FIELD`
+until the script runs again. `--check` reports the gap before a call does.
+
 **Google Sheets** (`BACKEND=sheets`) — create a sheet, share it with the
 service-account email as an editor, set `SHEET_ID` and `GOOGLE_CREDENTIALS_JSON`,
 then `python scripts/seed_sheet.py` builds and fills all three tabs.

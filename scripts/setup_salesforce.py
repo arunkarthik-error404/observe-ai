@@ -5,7 +5,7 @@
     python scripts/setup_salesforce.py --seed     # Contacts and Cases from app/seed.py
     python scripts/setup_salesforce.py --all
 
-Why script the schema instead of clicking it: thirteen custom fields across
+Why script the schema instead of clicking it: nineteen custom fields across
 three objects is tedious to create by hand, easy to typo, and impossible to
 review. More importantly, **fields created through the API have no field-level
 security by default** — they exist, queries name them, and every value comes
@@ -58,8 +58,22 @@ FIELDS: dict[str, list[dict[str, Any]]] = {
     "Task": [
         {"name": "Call_Id__c", "label": "Call Id", "type": "Text",
          "length": 64, "externalId": True, "unique": True},
+        # The caller's name as the call recorded it. `WhoId` already points at
+        # the Contact when the phone matched one, which is the better handle —
+        # but it is only set on a match, so an unverified caller, or a verified
+        # one ringing from a number no Contact carries, left the record with no
+        # name on it at all. The brief asks for the name on the record, and a
+        # lookup that is sometimes absent does not satisfy that. 121 = Contact
+        # Name's own length (FirstName 40 + space + LastName 80).
+        {"name": "Caller_Name__c", "label": "Caller Name", "type": "Text", "length": 121},
         {"name": "Call_Sentiment__c", "label": "Call Sentiment", "type": "Text", "length": 20},
         {"name": "Call_Intent__c", "label": "Call Intent", "type": "Text", "length": 255},
+        # When the call ended, to the second. `ActivityDate` is a Date, so the
+        # time of day was being truncated away — a 09:14 call and a 17:52 call
+        # were indistinguishable on the record. `CreatedDate` is not a
+        # substitute: it is when the row was written, and because both write
+        # paths upsert the same Task it is pinned to whichever landed first.
+        {"name": "Call_Timestamp__c", "label": "Call Timestamp", "type": "DateTime"},
         # How the call resolved. Previously this lived only in the Subject,
         # which is a problem because Subject is sent on every write while an
         # empty custom field is omitted: a second write with no outcome

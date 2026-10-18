@@ -213,6 +213,86 @@ def test_interaction_upserts_by_external_id(org):
     assert "denied" in body["Description"]
 
 
+# --- the four fields the brief asks for on the post-call record -------------
+def test_the_record_carries_name_summary_sentiment_and_timestamp(org):
+    """The brief names exactly these four. Two of them used to be missing from
+    the Task: `caller_name` was never written at all, and the timestamp was
+    truncated to a date because `ActivityDate` cannot hold a time."""
+    repo, fake = org
+    repo.write_interaction(InteractionRecord(
+        call_id="call_four_fields",
+        timestamp="2026-10-18T17:52:09+00:00",
+        caller_name="Ana Duarte",
+        caller_phone="5556936678",
+        summary="Caller asked about a denied claim.",
+        sentiment="negative",
+    ))
+    body = fake.patches[0]["body"]
+
+    assert body["Caller_Name__c"] == "Ana Duarte"
+    assert "denied claim" in body["Description"]
+    assert body["Call_Sentiment__c"] == "negative"
+    # To the second, not just the day.
+    assert body["Call_Timestamp__c"] == "2026-10-18T17:52:09+00:00"
+    # And the day-level field stays, because it is what files the Task on the
+    # right date in the activity timeline.
+    assert body["ActivityDate"] == "2026-10-18"
+
+
+def test_an_unverified_caller_still_gets_a_name_on_the_record(org):
+    """The gap WhoId left. No Contact matches, so the lookup is absent — which
+    is exactly when the name on the record is the only name there is."""
+    repo, fake = org
+    repo.write_interaction(InteractionRecord(
+        call_id="call_unverified",
+        caller_phone="5550000000",     # matches no Contact in the fixture org
+        caller_name="Unverified caller",
+        summary="Could not verify identity.",
+    ))
+    body = fake.patches[0]["body"]
+    assert "WhoId" not in body
+    assert body["Caller_Name__c"] == "Unverified caller"
+
+
+def test_an_unreadable_timestamp_does_not_cost_the_whole_record(org):
+    """A malformed datetime fails the upsert with INVALID_FIELD, which would
+    lose the call over the one field on it that nothing reads back."""
+    repo, fake = org
+    repo.write_interaction(InteractionRecord(
+        call_id="call_bad_ts",
+        timestamp="last Tuesday",
+        caller_name="Ana Duarte",
+        summary="Routine call.",
+    ))
+    body = fake.patches[0]["body"]
+    assert "Call_Timestamp__c" not in body   # dropped by the empty-value filter
+    assert body["Caller_Name__c"] == "Ana Duarte"
+
+
+def test_a_z_suffixed_timestamp_from_vapi_is_accepted(org):
+    """`endedAt` is the provider's shape: seen with a trailing Z and with
+    fractional seconds, neither of which `fromisoformat` took before 3.11."""
+    repo, fake = org
+    repo.write_interaction(InteractionRecord(
+        call_id="call_z",
+        timestamp="2026-10-18T17:52:09.482Z",
+        summary="Routine call.",
+    ))
+    assert fake.patches[0]["body"]["Call_Timestamp__c"] == "2026-10-18T17:52:09+00:00"
+
+
+def test_a_long_caller_name_is_truncated_not_rejected(org):
+    """Caller_Name__c is Text(121). Salesforce rejects an over-length value for
+    the whole record, and a name is not worth losing a call over."""
+    repo, fake = org
+    repo.write_interaction(InteractionRecord(
+        call_id="call_long_name",
+        caller_name="Bartholomew " * 20,
+        summary="Routine call.",
+    ))
+    assert len(fake.patches[0]["body"]["Caller_Name__c"]) == 121
+
+
 def test_the_callback_number_is_in_the_description_not_the_contact_match(org):
     """A number only present in the transcript is a callback nobody makes.
 
