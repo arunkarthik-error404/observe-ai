@@ -52,6 +52,7 @@
   .event .tag { font-size: 11px; font-family: var(--mono); padding: 1px 7px; border-radius: 999px;
                 background: var(--panel-2); border: 1px solid var(--line); }
   .event .tag.err { color: var(--bad); } .event .tag.ok { color: var(--ok); }
+  .event .tag.warn { color: var(--warn); border-color: #4c432a; }
   pre { margin: 0; padding: 12px; background: #12141a; border-top: 1px solid var(--line);
         font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word;
         color: #c9d1e1; max-height: 340px; overflow: auto; }
@@ -185,11 +186,18 @@ function renderDetail() {
     const key = `${c.call_id}:${i}`;
     const bad = !!e.error;
     const override = e.result && e.result.safety_override ? ' <span class="tag err">safety override</span>' : "";
+    // Which agent made the call. "who dropped that?" is the first question
+    // about any squad handoff bug, and the path alone cannot answer it.
+    const prev = (c.tool_events || [])[i - 1];
+    const handoff = e.assistant && prev && prev.assistant && prev.assistant !== e.assistant;
+    const who = e.assistant
+      ? ` <span class="tag ${handoff ? "warn" : ""}">${handoff ? "↪ " : ""}${esc(e.assistant)}</span>`
+      : "";
     return `<details class="event ${bad ? "err" : ""}" data-key="${esc(key)}" ${state.open.has(key) ? "open" : ""}>
       <summary>
         <span class="name">${esc(e.name)}</span>
         <span class="tag ${bad ? "err" : "ok"}">${bad ? esc(e.error) : "ok"}</span>
-        <span class="ms">${e.duration_ms} ms</span>${override}
+        <span class="ms">${e.duration_ms} ms</span>${who}${override}
       </summary>
       <pre>args    ${esc(JSON.stringify(e.arguments, null, 2))}
 

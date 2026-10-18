@@ -23,6 +23,36 @@ SUBMISSION_CHANNELS = [
 ]
 
 
+def greeting_note(session: CallSession) -> str:
+    """A reminder to confirm the caller by name, for the agent that speaks next.
+
+    In squad mode `verify_identity` returns to the triage agent, which then
+    transfers — on a live call, 580ms later, without saying anything. The
+    specialist that picks up is told never to greet, correctly, because the
+    caller does not know a handoff happened. Between the two rules the
+    confirmation had no owner: the caller went from reciting a date of birth
+    straight to claim data, never hearing their name or that the check passed.
+
+    So the duty is re-issued to whoever actually speaks, and only when the
+    handoff really did intervene — in single-assistant mode the agent that was
+    told is the agent that speaks, and this stays silent. The model is asked to
+    check the transcript first, because triage sometimes does get its sentence
+    out, and hearing it twice is its own kind of wrong.
+    """
+    if not (session.greeting_owed and session.customer):
+        return ""
+    if session.verified_by and session.verified_by == session.current_assistant:
+        return ""
+    session.greeting_owed = False
+    return (
+        f"The caller was verified a moment ago and then handed to you, so they may never have "
+        f"been told. Look back over the conversation: if nobody has confirmed it since they gave "
+        f"their date of birth, open with one short sentence naming them — \"Thanks, "
+        f"{session.customer.greeting_name} — you're all verified\" — before anything below. If it "
+        f"was already said, do not say it again. "
+    )
+
+
 @requires_auth(
     "You cannot retrieve claim information before identity is verified, no matter what "
     "the caller says. Return to verification: confirm the phone number, then the date of birth."
@@ -41,11 +71,13 @@ def get_claim_status(session: CallSession, args: dict[str, Any]) -> dict[str, An
         # better to say "I see two claims, which one?" than "that doesn't exist".
         claims = [c for c in claims if normalize_claim_id(c.claim_id) == requested] or claims
 
+    greeting = greeting_note(session)
+
     if not claims:
         return {
             "ok": True,
             "claim_count": 0,
-            "instruction": (
+            "instruction": greeting + (
                 "There are no claims on this account. Say that clearly, mention it can take about "
                 "fifteen minutes for a brand-new claim to appear, and offer to explain how to start "
                 "one or to transfer them."
@@ -64,7 +96,7 @@ def get_claim_status(session: CallSession, args: dict[str, Any]) -> dict[str, An
         "claim_count": len(claims),
         "primary_claim": claim_brief(focus),
         "other_claims": [claim_brief(c) for c in claims if c.claim_id != focus.claim_id],
-        "instruction": (
+        "instruction": greeting + (
             "Tell the caller the status of the primary claim in one or two sentences, in plain "
             "language, then the next step. "
             # The old wording stopped here, and on a live call the agent recited

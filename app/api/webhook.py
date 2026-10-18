@@ -89,8 +89,10 @@ def _handle_tool_calls(call_id: str, message: dict[str, Any], msg_type: str) -> 
     # In squad mode this records the handoff chain. Falls back to the assistant
     # id because Vapi does not always include the full assistant object.
     label = payloads.assistant_label(message)
-    if label and label not in session.assistant_path:
-        session.assistant_path.append(label)
+    if label:
+        session.current_assistant = label
+        if label not in session.assistant_path:
+            session.assistant_path.append(label)
 
     results = []
     for call in payloads.tool_calls(message):

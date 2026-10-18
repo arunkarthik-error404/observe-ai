@@ -32,6 +32,11 @@ class ToolEvent:
     duration_ms: float
     at: float = field(default_factory=time.time)
     error: str | None = None
+    # Which squad member made the call. `assistant_path` only records the order
+    # agents first appear, which is not enough to answer "who dropped that?" —
+    # diagnosing a verification confirmation lost at a handoff meant leaving
+    # this console and reading the provider's own call record to find out.
+    assistant: str = ""
 
 
 @dataclass
@@ -63,6 +68,15 @@ class CallSession:
     emergency: bool = False
     tool_events: list[ToolEvent] = field(default_factory=list)
     assistant_path: list[str] = field(default_factory=list)
+    # The agent handling the current tool batch, so each event can be attributed.
+    current_assistant: str = ""
+    # Who was holding the call when identity was confirmed, and whether the
+    # caller has yet to be told. In squad mode the agent that runs
+    # `verify_identity` hands off within a second of the result, so the
+    # instruction to greet the caller by name reaches an agent that is about to
+    # stop speaking. See `claims.greeting_note`.
+    verified_by: str = ""
+    greeting_owed: bool = False
     # Caller-perceived turn latency, filled in from the end-of-call report.
     latency: dict[str, Any] = field(default_factory=dict)
 
@@ -107,6 +121,7 @@ class CallSession:
                     "duration_ms": round(e.duration_ms, 1),
                     "error": e.error,
                     "at": e.at,
+                    "assistant": e.assistant,
                 }
                 for e in self.tool_events
             ],

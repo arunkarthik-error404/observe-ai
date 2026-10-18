@@ -24,6 +24,36 @@ from rapidfuzz import fuzz
 KB_PATH = Path(__file__).parent / "faq.md"
 MIN_SCORE = 52.0  # tuned against the recall/leak fixtures in scripts/check_kb.py
 
+# Written forms that a text-to-speech voice mangles or silently drops. Same
+# problem `spoken_amount` solves for money and the phonetic emergency script
+# solves for "9-1-1": the entry is correct on a screen and wrong out loud.
+#
+# A live call read `claims@observeinsurance.com` as "claims observe insurance
+# dot com" — the `@` simply vanished, leaving the caller an address that does
+# not exist — and dropped the fax number entirely mid-sentence.
+_EMAIL = re.compile(r"\b([\w.+-]+)@([\w-]+(?:\.[\w-]+)+)\b")
+_URL = re.compile(r"\b([\w-]+(?:\.[\w-]+)+)/(\S+)")
+_PHONE = re.compile(r"\b(\d{3})-(\d{3})-(\d{4})\b")
+_DOMAIN = re.compile(r"\b([\w-]+)\.(com|org|net)\b")
+
+
+def speakable(text: str) -> str:
+    """Rewrite a knowledge-base answer into something a voice can say.
+
+    Deliberately a transform rather than a second copy of each answer in the
+    file. A hand-written spoken variant is one edit away from disagreeing with
+    the written one, and a knowledge base whose two halves disagree is worse
+    than one that is awkward in places.
+    """
+    text = _PHONE.sub(
+        lambda m: ", ".join(" ".join(group) for group in m.groups()), text)
+    text = _EMAIL.sub(
+        lambda m: f"{m.group(1)} at {m.group(2).replace('.', ' dot ')}", text)
+    text = _URL.sub(
+        lambda m: f"{m.group(1).replace('.', ' dot ')} slash {m.group(2)}", text)
+    text = _DOMAIN.sub(lambda m: f"{m.group(1)} dot {m.group(2)}", text)
+    return " ".join(text.split())
+
 
 @dataclass
 class KBEntry:
@@ -103,7 +133,10 @@ def search(query: str, top_k: int = 3) -> dict:
     return {
         "found": True,
         "topic": best.title,
-        "answer": best.answer,
+        # The spoken form is the only one returned, so there is no second
+        # string for the model to read out by mistake. faq.md stays the single
+        # written source of truth.
+        "answer": speakable(best.answer),
         "score": round(float(best_score), 1),
         "candidates": candidates,
         # The third branch, added after a live call fell through the gap between
@@ -115,11 +148,19 @@ def search(query: str, top_k: int = 3) -> dict:
         # which is the one outcome this whole tool exists to prevent. So the
         # near-miss now has an instruction of its own.
         "instruction": (
-            "Answer using only the text in 'answer'. Shorten it for speech; do not add facts. "
+            "Answer using only the text in 'answer'. Do not add facts. "
             "First check it actually answers what the caller asked: 'topic' is the entry this "
             "matched, and a confident match can still be the wrong topic. If it does not answer "
             "them, do not stretch it to fit and do not substitute an answer of your own — say it "
             "is not something you can confirm on this line and offer a representative, exactly as "
-            "you would if nothing had been found."
+            "you would if nothing had been found. "
+            # Reading one of these out in full ran to twenty-three seconds on a
+            # live call, and the voice dropped a phone number partway through.
+            # A caller who wanted the quickest way to send a photo had to sit
+            # through a fax number and a P.O. box to get it.
+            "Then cut it down. If the answer lists several options, give the best one or two and "
+            "say there are others if they would rather — do not read the whole list. Two or three "
+            "sentences, then stop and let them ask. The text is what you may say, not a script you "
+            "have to finish."
         ),
     }

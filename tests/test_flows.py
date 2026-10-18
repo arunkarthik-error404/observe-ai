@@ -263,7 +263,8 @@ def test_adding_a_photo_routes_to_document_submission():
         result = tool(new_call(), "search_knowledge_base", query=question)
         assert result["found"] is True, question
         assert result["topic"] == "How to submit documents", question
-        assert "observeinsurance.com/upload" in result["answer"]
+        # Spoken form: the portal is still the channel it points at.
+        assert "observeinsurance dot com slash upload" in result["answer"]
 
 
 def test_a_confident_match_still_tells_the_agent_to_check_it_fits():
@@ -754,6 +755,58 @@ def test_verification_survives_the_handoff_between_agents():
     assert session.customer.full_name == "Daniel Okafor"
 
 
+def test_the_verification_confirmation_survives_the_handoff_too():
+    """A live call went from a date of birth straight to claim details.
+
+    `verify_identity` returned "thank the caller by name", triage transferred
+    580ms later without speaking, and the specialist is told never to greet —
+    so the caller was never told the security check had passed. The duty is
+    re-issued to whichever agent actually speaks.
+    """
+    call_id = new_call()
+    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
+    verified = tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1979-11-03")
+    # The instruction may not read as "greet them, or else get on with it".
+    assert "before anything else" in verified["instruction"].lower()
+    assert "Daniel" in verified["instruction"]
+
+    status = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+    instruction = status["instruction"]
+    assert instruction.startswith("The caller was verified a moment ago")
+    assert "Daniel" in instruction
+    # Said once. A second claim lookup must not ask for it again.
+    again = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+    assert not again["instruction"].startswith("The caller was verified a moment ago")
+
+
+def test_one_assistant_doing_everything_is_not_told_to_re_confirm():
+    """The reminder exists because a handoff intervened. Without one, the agent
+    that was told to say it is the agent that speaks, and repeating the duty
+    would just invite it to say the same thing twice."""
+    call_id = new_call()
+    tool_as(call_id, "observe-claims-agent", "lookup_customer", phone_number="555-234-1187")
+    tool_as(call_id, "observe-claims-agent", "verify_identity", date_of_birth="1979-11-03")
+    status = tool_as(call_id, "observe-claims-agent", "get_claim_status")
+    assert not status["instruction"].startswith("The caller was verified a moment ago")
+
+
+def test_every_tool_event_records_which_agent_made_it():
+    """Diagnosing the dropped confirmation meant leaving this console for the
+    provider's call record, because the session knew the agents involved but
+    not which one made which call."""
+    call_id = new_call()
+    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
+    tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1979-11-03")
+    tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+
+    events = store.peek(call_id).snapshot()["tool_events"]
+    assert [(e["name"], e["assistant"]) for e in events] == [
+        ("lookup_customer", "observe-triage"),
+        ("verify_identity", "observe-triage"),
+        ("get_claim_status", "observe-claims-specialist"),
+    ]
+
+
 def test_a_premature_handoff_still_cannot_read_claim_data():
     """Capability scoping is the first control; the session gate is the second.
 
@@ -892,3 +945,35 @@ def test_pasted_settings_are_stripped_of_whitespace(monkeypatch):
         assert loaded.vapi_secret == "s3cret"
     finally:
         config.settings.cache_clear()
+
+
+# --- knowledge base: written for a screen, spoken down a phone -------------
+def test_an_email_address_and_a_fax_number_are_rewritten_for_the_voice():
+    """A live call read claims@observeinsurance.com as "claims observe
+    insurance dot com" — the @ vanished, leaving an address that does not
+    exist — and dropped the fax number entirely partway through the sentence.
+    """
+    from app.knowledge import speakable
+
+    answer = tool(new_call(), "search_knowledge_base",
+                  query="how do I send photos")["answer"]
+    assert "@" not in answer
+    assert "claims at observeinsurance dot com" in answer
+    assert "9 1 6, 5 5 5, 0 1 8 8" in answer
+    assert "observeinsurance dot com slash upload" in answer
+
+    # The transform itself, independent of any one entry.
+    assert speakable("mail a@b.com") == "mail a at b dot com"
+    assert speakable("call 916-555-0188") == "call 9 1 6, 5 5 5, 0 1 8 8"
+    # Prose is left alone.
+    assert speakable("Approved payments issue in three to five days.") == (
+        "Approved payments issue in three to five days.")
+
+
+def test_a_long_answer_is_told_to_stop_rather_than_recite():
+    """Twenty-three seconds of unbroken speech on a live call, to answer
+    "how do I add a photo later"."""
+    instruction = tool(new_call(), "search_knowledge_base",
+                       query="how do I send photos")["instruction"].lower()
+    assert "do not read the whole list" in instruction
+    assert "stop and let them ask" in instruction

@@ -92,15 +92,30 @@ def verify_identity(session: CallSession, args: dict[str, Any]) -> dict[str, Any
     if supplied == expected and expected:
         session.customer = session.candidate
         session.auth_outcome = "verified"
+        # Who was holding the call at this moment, so a later tool can tell
+        # whether the caller was handed on before anyone spoke the confirmation.
+        session.verified_by = session.current_assistant
+        session.greeting_owed = True
         return {
             "ok": True,
             "verified": True,
             "customer_name": session.customer.full_name,
             "greeting_name": session.customer.greeting_name,
             "policy_id": session.customer.policy_id,
+            # The old wording was "thank the caller by first name, then ask what
+            # they need help with, **or** go straight to their claim if they
+            # already said" — read as an either/or by a caller who had already
+            # said, which dropped the name and the confirmation entirely. The
+            # greeting is not the alternative to continuing; it is the sentence
+            # before it.
             "instruction": (
-                "Identity confirmed. Thank the caller by first name, then ask what they need help "
-                "with, or go straight to their claim if they already said."
+                f"Identity confirmed. Say this out loud before anything else — before any other "
+                f"tool and before any handoff: thank {session.customer.greeting_name} by name and "
+                f"tell them they are verified. One short sentence, such as \"Thanks, "
+                f"{session.customer.greeting_name} — you're all verified.\" This is the only signal "
+                f"the caller gets that the security check passed, and going straight into their "
+                f"claim leaves them wondering whether it did. Only once you have said it, continue: "
+                f"go to their claim if they already told you what they need, otherwise ask."
             ),
         }
 

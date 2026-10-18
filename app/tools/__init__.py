@@ -91,6 +91,7 @@ def dispatch(session: CallSession, name: str, args: dict[str, Any]) -> dict[str,
             result=result,
             duration_ms=duration_ms,
             error=None if result.get("ok") else str(result.get("error", "")),
+            assistant=session.current_assistant,
         )
     )
     log.info(
