@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -36,6 +37,7 @@ sys.path.insert(0, str(ROOT))
 # Importing the tool registry must not touch a real backend or a real .env.
 os.environ.setdefault("BACKEND", "memory")
 
+from app.seed import CUSTOMERS  # noqa: E402
 from app.tools import REGISTRY  # noqa: E402
 from scripts.provision_vapi import INCLUDE, render_prompt  # noqa: E402
 
@@ -95,7 +97,7 @@ def main() -> int:
     check(squad["entry"] in members, "entry assistant is a squad member", squad["entry"])
     for member in members:
         check(member in assistants, f"member {member} is defined")
-        check(assistants.get(member, {}).get("mode") == "squad", f"member {member} is marked squad mode")
+        check(bool(assistants.get(member, {}).get("prompt")), f"member {member} has a prompt")
 
     for member in members:
         for destination in assistants.get(member, {}).get("destinations", []):
@@ -117,6 +119,85 @@ def main() -> int:
     # exactly one agent owns escalation.
     owners = [m for m in members if "escalate_to_human" in assistants.get(m, {}).get("tools", [])]
     check(len(owners) == 1, "exactly one squad agent owns escalation", f"owners: {owners}")
+
+    # --- prompts against the tools they are running ----------------------
+    #
+    # Everything above this checks wiring: names that resolve, destinations
+    # that exist, includes that render. None of it can see a prompt that is
+    # internally coherent and contradicts the server. That gap ran live for
+    # several commits — `verify_identity` was changed to hold the verification
+    # sentence back for the agent that stays, `squad_claims.md` was given the
+    # duty, and `squad_triage.md` was left telling the triage agent to say it
+    # before transferring. Both instructions were in the same prompt at once,
+    # and the model picked one per call.
+    print("-- prompts vs tools --")
+    rendered: dict[str, str] = {}
+    for name, assistant in assistants.items():
+        relative = assistant.get("prompt")
+        if relative and (ROOT / "vapi" / relative).exists():
+            rendered[name] = render_prompt(relative)
+
+    # Nothing meant for an editor may reach the model. A `why` block whose own
+    # text contained a comment-closing sequence ended early and shipped the
+    # rest of itself as instructions — the pattern is non-greedy, so it stopped
+    # at the example rather than the real terminator.
+    for name, text in rendered.items():
+        check("<!-- why" not in text, f"{name}: no unclosed why block",
+              "a why block did not terminate; its text is now in the prompt")
+        check("-->" not in text, f"{name}: no comment residue",
+              "a stray comment terminator means a block closed in the wrong place")
+
+    # These prompts teach by counter-example — "Wrong: ..." lines quote the
+    # thing the model must not say. Scanning raw text for a forbidden phrase
+    # therefore flags the prompt for forbidding it, which is backwards. Every
+    # check below reads the instructions only.
+    def instructions_only(text: str) -> str:
+        return "\n".join(
+            line for line in text.splitlines()
+            if not line.lstrip().lower().startswith("wrong:")
+        )
+
+    # The architecture, asserted rather than described: whoever authenticates
+    # the caller must also be the one who answers them. This is the check the
+    # old three-agent squad would have failed — `observe-triage` held
+    # `verify_identity` and nothing else, so the call had to change hands in
+    # the middle of one continuous exchange, and the 18 Oct recording put
+    # about eight seconds of silence in that gap. Splitting at verification is
+    # now a failing build rather than a judgement call.
+    verifiers = [m for m, a in assistants.items() if "verify_identity" in (a.get("tools") or [])]
+    check(len(verifiers) == 1, "exactly one agent authenticates", f"verifiers: {verifiers}")
+    for name in verifiers:
+        tools = assistants[name].get("tools") or []
+        check("get_claim_status" in tools,
+              f"{name}: the agent that verifies also serves the claim",
+              "an agent that authenticates and then hands the caller on splits one "
+              "continuous exchange across a transfer; the caller pays for it in silence")
+
+    # The verification sentence is held back by `verify_identity` for the first
+    # tool after it, so no prompt may hand it out at the verification step.
+    # Asserted positively — that the prompt tells the model to announce
+    # nothing there — because an absence of the wrong phrasing is not the
+    # presence of the right one.
+    for name in verifiers:
+        body = instructions_only(rendered.get(name, "")).lower()
+        check("do not announce it here" in body,
+              f"{name}: announces nothing at the verification step",
+              "verify_identity returns the name but tells the model to hold it; a prompt "
+              "that says to greet them by name there contradicts the tool, and the model "
+              "followed the prompt — naming a caller four seconds before the check ran")
+
+    # A worked example using a name from the demo dataset puts that exact name
+    # in the model's context next to the sentence it belongs in. A live call
+    # thanked a caller by name before `verify_identity` had run at all, and
+    # the only place that name appeared in any prompt was an example.
+    seed_names = {c["preferred_name"] for c in CUSTOMERS} | {
+        c["full_name"].split()[-1] for c in CUSTOMERS
+    }
+    for name, text in rendered.items():
+        body = instructions_only(text)
+        found = sorted(n for n in seed_names if re.search(rf"\b{re.escape(n)}\b", body))
+        check(not found, f"{name}: no demo persona names in the instructions",
+              f"found {found} — use the field name, e.g. `greeting_name`")
 
     print(f"\n{len(failures)} failure(s)")
     return 1 if failures else 0

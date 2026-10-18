@@ -3,7 +3,8 @@
     "Version-controlled agent configuration. scripts/provision_vapi.py renders this",
     "into Vapi assistants/squads via the API, so the agent is reproducible instead of",
     "clicked together in a dashboard. $SERVER_URL and $VAPI_SECRET are injected at",
-    "provision time and never stored here."
+    "provision time and never stored here.",
+    "The single-assistant variant was removed: one agent that greets, verifies and serves the claim, plus an escalation agent, is the whole system. Nothing is 'squad mode' any more, so the per-assistant mode flag went with it."
   ],
   "defaults": {
     "model": {
@@ -12,7 +13,7 @@
       "temperature": 0.3,
       "maxTokens": 300
     },
-    "_voice_comment": "Callers reach this line after an accident or a denial, so warmth beats brightness. Leah = warm/gentle; Clara (professional), Elliot (calm) and Kai (helpful) are the other sensible swaps. version 2 is the current Vapi voice model — v1 ids like Paige are legacy and rejected on new assistants.",
+    "_voice_comment": "Callers reach this line after an accident or a denial, so warmth beats brightness. Leah = warm/gentle; Clara (professional), Elliot (calm) and Kai (helpful) are the other sensible swaps. version 2 is the current Vapi voice model \u2014 v1 ids like Paige are legacy and rejected on new assistants.",
     "voice": {
       "provider": "vapi",
       "voiceId": "Leah",
@@ -107,7 +108,7 @@
     }
   },
   "tools": {
-    "_request_start_comment": "Only on tools that actually take time (a Sheets or Salesforce round trip is 300-900ms). verify_identity answers in about 2ms, and its filler phrase collided with the model's own — the caller heard 'One moment. Please. One moment while I check that.' Filler for a tool that is already instant is worse than silence. escalate_to_human lost its filler for the same reason: it runs in under a millisecond (the Slack post is queued on a worker thread), and 'Let me get someone for you' landed on top of the model's own 'I'll transfer you to someone who can help' — two spoken promises of a transfer, before the tool had decided whether one was even possible.",
+    "_request_start_comment": "Only on tools that actually take time (a Sheets or Salesforce round trip is 300-900ms). verify_identity answers in about 2ms, and its filler phrase collided with the model's own \u2014 the caller heard 'One moment. Please. One moment while I check that.' Filler for a tool that is already instant is worse than silence. escalate_to_human lost its filler for the same reason: it runs in under a millisecond (the Slack post is queued on a worker thread), and 'Let me get someone for you' landed on top of the model's own 'I'll transfer you to someone who can help' \u2014 two spoken promises of a transfer, before the tool had decided whether one was even possible.",
     "lookup_customer": {
       "description": "Look up whether an Observe Insurance account exists for a phone number. Call this first for anything account-specific. Returns only whether an account exists - it never returns the customer's name.",
       "parameters": {
@@ -125,7 +126,7 @@
       "request_start": "Let me look that up for you."
     },
     "verify_identity": {
-      "description": "Confirm the caller's identity using the date of birth on the policy. Must succeed before any claim information can be retrieved. This answers instantly, so say nothing before calling it — no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
+      "description": "Confirm the caller's identity using the date of birth on the policy. Must succeed before any claim information can be retrieved. This answers instantly, so say nothing before calling it \u2014 no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -140,7 +141,7 @@
       }
     },
     "get_claim_status": {
-      "description": "Retrieve the caller's claims and their current status. Requires verified identity.",
+      "description": "Retrieve the caller's claims and their current status. When a claim is waiting on paperwork this also returns `documents` \u2014 what to send, the ways to send it, and the deadline \u2014 so there is no second call to make for it. Requires verified identity.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -152,20 +153,8 @@
       },
       "request_start": "Let me pull up your claim."
     },
-    "get_document_instructions": {
-      "description": "Get the documents a claim still needs, the ways to submit them, and the deadline. Requires verified identity. This answers instantly, so say nothing before calling it — no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "claim_id": {
-            "type": "string",
-            "description": "Optional claim number."
-          }
-        }
-      }
-    },
     "search_knowledge_base": {
-      "description": "Answer a general question about Observe Insurance: office hours, mailing address, how to start a new claim, the claims process, document submission, payment timing, appeals, deductibles, rental cover, privacy. This is the only approved source for any fact you state out loud - call it for every general or factual question rather than answering from memory, including questions that sound unrelated to insurance, and follow the instruction it returns when it finds no match. Does not require authentication. This answers instantly, so say nothing before calling it — no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
+      "description": "Answer a general question about Observe Insurance: office hours, mailing address, how to start a new claim, the claims process, document submission, payment timing, appeals, deductibles, rental cover, privacy. This is the only approved source for any fact you state out loud - call it for every general or factual question rather than answering from memory, including questions that sound unrelated to insurance, and follow the instruction it returns when it finds no match. Does not require authentication. This answers instantly, so say nothing before calling it \u2014 no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -180,7 +169,7 @@
       }
     },
     "escalate_to_human": {
-      "description": "Open a handoff ticket and get transfer instructions when the caller needs a human, verification failed, the caller is distressed, or a system is unavailable. This answers instantly, so say nothing before calling it — no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
+      "description": "Open a handoff ticket and get transfer instructions when the caller needs a human, verification failed, the caller is distressed, or a system is unavailable. This answers instantly, so say nothing before calling it \u2014 no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -211,7 +200,7 @@
       }
     },
     "record_callback_number": {
-      "description": "Save the phone number a human should call the caller back on. Required before ending any call where you promised a callback - the number is not captured from the conversation by itself. This answers instantly, so say nothing before calling it — no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
+      "description": "Save the phone number a human should call the caller back on. Required before ending any call where you promised a callback - the number is not captured from the conversation by itself. This answers instantly, so say nothing before calling it \u2014 no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -226,7 +215,7 @@
       }
     },
     "report_emergency": {
-      "description": "Call immediately if the caller describes a life-threatening or in-progress emergency: fire, gas leak, injuries, chest pain, someone not breathing, self-harm, or an accident happening right now. This answers instantly, so say nothing before calling it — no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
+      "description": "Call immediately if the caller describes a life-threatening or in-progress emergency: fire, gas leak, injuries, chest pain, someone not breathing, self-harm, or an accident happening right now. This answers instantly, so say nothing before calling it \u2014 no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -241,7 +230,7 @@
       }
     },
     "log_interaction": {
-      "description": "Write the post-call interaction record. Call this once, just before ending the call. This answers instantly, so say nothing before calling it — no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
+      "description": "Write the post-call interaction record. Call this once, just before ending the call. This answers instantly, so say nothing before calling it \u2014 no \"just a sec\", no \"one moment\", no \"let me check\". There is no pause to cover and announcing one only makes the call slower. Call it, then speak the answer.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -276,52 +265,15 @@
     }
   },
   "assistants": {
-    "observe-claims-agent": {
-      "mode": "single",
-      "prompt": "prompts/single_assistant.md",
-      "firstMessage": "Thanks for calling Observe Insurance claims support, this is Aria. How can I help you today?",
-      "tools": [
-        "lookup_customer",
-        "verify_identity",
-        "get_claim_status",
-        "get_document_instructions",
-        "search_knowledge_base",
-        "escalate_to_human",
-        "record_callback_number",
-        "report_emergency",
-        "log_interaction"
-      ]
-    },
-    "observe-triage": {
-      "mode": "squad",
-      "prompt": "prompts/squad_triage.md",
-      "firstMessage": "Thanks for calling Observe Insurance claims support, this is Aria. How can I help you today?",
-      "_tools_comment": "No escalate_to_human here on purpose. On the first live squad call the specialist both opened the ticket AND transferred, so the caller heard the handoff announced twice. In squad mode only the escalation agent owns escalation; everyone else just transfers to it.",
-      "tools": [
-        "lookup_customer",
-        "verify_identity",
-        "search_knowledge_base",
-        "report_emergency"
-      ],
-      "destinations": [
-        {
-          "assistant": "observe-claims-specialist",
-          "message": "",
-          "description": "Transfer here once verify_identity has returned verified true and the caller has a claim question, a document question, or any account-specific request. This transfer is silent and the caller must never learn it happened: say nothing about it, do not say you are transferring or connecting them, and do not name or describe whoever picks up. A live call said \"let me transfer you to a claims specialist\" out loud three times running. Your last words before calling this are the end of what you were already saying, and nothing more."
-        },
-        {
-          "assistant": "observe-escalation",
-          "message": "",
-          "description": "Transfer here when the caller asks for a human, when verification has failed the maximum number of attempts, when no account could be found and the caller wants a person, or when the caller is distressed. This transfer is silent and the caller must never learn it happened: say nothing about it, do not say you are transferring or connecting them, and do not name or describe whoever picks up. A live call said \"let me transfer you to a claims specialist\" out loud three times running. Your last words before calling this are the end of what you were already saying, and nothing more."
-        }
-      ]
-    },
-    "observe-claims-specialist": {
-      "mode": "squad",
+    "observe-claims": {
       "prompt": "prompts/squad_claims.md",
+      "firstMessage": "Thanks for calling Observe Insurance claims support, this is Aria. How can I help you today?",
+      "_split_comment": "This was two assistants \u2014 observe-triage, which greeted and authenticated, and observe-claims-specialist, which read the claim. The call record showed why that was wrong: on 18 Oct the transfer fired at 49.79s, immediately after verify_identity returned, with zero caller turns in between, and bought ~8s of dead air (last audio ~46s, next ~53.9s) for no reduction in scope. Triage's entire job ended the moment verification passed, so the split was a handoff in the middle of one continuous exchange. The rule it taught: split where the conversation ends or hands off, never where it continues. Escalation is terminal and keeps its own agent; verification is not, and no longer does.",
+      "_tools_comment": "No escalate_to_human here on purpose. On the first live squad call one agent both opened the ticket AND transferred, so the caller heard the handoff announced twice. In squad mode only the escalation agent owns escalation; everyone else just transfers to it.",
       "tools": [
+        "lookup_customer",
+        "verify_identity",
         "get_claim_status",
-        "get_document_instructions",
         "search_knowledge_base",
         "report_emergency",
         "log_interaction"
@@ -330,12 +282,11 @@
         {
           "assistant": "observe-escalation",
           "message": "",
-          "description": "Transfer here when the caller asks for a human, disputes a decision and wants to appeal with an agent, is distressed, or asks something outside claims support. This transfer is silent and the caller must never learn it happened: say nothing about it, do not say you are transferring or connecting them, and do not name or describe whoever picks up. A live call said \"let me transfer you to a claims specialist\" out loud three times running. Your last words before calling this are the end of what you were already saying, and nothing more."
+          "description": "Transfer here when the caller asks for a human, when verification has failed the maximum number of attempts, when no account could be found and the caller wants a person, when they dispute a decision and want to appeal with an agent, when they are distressed, or when they ask for something outside claims support. This transfer is silent and the caller must never learn it happened: say nothing about it, do not say you are transferring or connecting them, and do not name or describe whoever picks up. A live call said \"let me transfer you to a claims specialist\" out loud three times running. Your last words before calling this are the end of what you were already saying, and nothing more."
         }
       ]
     },
     "observe-escalation": {
-      "mode": "squad",
       "prompt": "prompts/squad_escalation.md",
       "_tools_comment": "report_emergency is on every agent without exception. A caller can declare a crisis at any point in the call, including while being handed to a human, and an agent that cannot route it has to improvise.",
       "tools": [
@@ -349,10 +300,10 @@
   },
   "squad": {
     "name": "observe-claims-squad",
-    "entry": "observe-triage",
+    "entry": "observe-claims",
+    "_members_comment": "Two, not three. One possible transfer, and it is the only one that carries information the receiving agent could not get itself: the escalation agent inherits the verification, the claim discussed and the topics covered, because the session is keyed on the call id rather than the assistant.",
     "members": [
-      "observe-triage",
-      "observe-claims-specialist",
+      "observe-claims",
       "observe-escalation"
     ]
   }

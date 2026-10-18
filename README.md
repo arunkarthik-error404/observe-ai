@@ -22,7 +22,7 @@ when it should, and writes the call back to the customer's record.
         ┌─────────┼──────────────┬────────────────┬──────────────┐
         ▼         ▼              ▼                ▼              ▼
    SessionStore  tools/       knowledge/      repositories/   notifications/
-   (auth state,  (9 tools,    (FAQ retrieval  ├─ salesforce ◀── Integration #1 (read)
+   (auth state,  (8 tools,    (FAQ retrieval  ├─ salesforce ◀── Integration #1 (read)
     attempts,     gated by     + refusal      │                 Integration #2 (write)
     timeline)     the server)  threshold)     ├─ sheets       Slack ◀── Integration #3
                                               └─ memory  ◀── tests & offline dev
@@ -46,6 +46,152 @@ Built on top of those flows: multi-agent orchestration (3-agent squad), a
 knowledge base with a refusal threshold, Slack as a third integration, and two
 interchangeable systems of record behind one interface, swappable with one
 environment variable.
+
+## How a call is routed
+
+The table above is what happens. This is where it is decided — in one place,
+because the logic is spread across nine tool handlers and the shape is hard to
+see by reading them one at a time.
+
+Routing is not in the prompt. Every tool result carries an `instruction` field,
+and that string is what tells the model where to go next, so the arrows below
+are returned by code in `app/tools/` rather than inferred by the model.
+
+```mermaid
+flowchart TD
+    A["Call arrives — Vapi POSTs to /vapi/webhook"] --> B{"message.type"}
+    B -->|"status-update, transcript, hang"| PASS["Passive: logged, no state change"]
+    B -->|"end-of-call-report"| REC["Write interaction record — upsert on call_id"]
+    B -->|"tool-calls"| DISPATCH["dispatch"]
+
+    DISPATCH --> SCAN{"Emergency regex matches any argument?"}
+    SCAN -->|"yes"| EMG["safety_override rides back on whatever<br/>result was produced — 911 script spoken first"]
+    SCAN -->|"no"| GATE{"Tool gated by requires_auth?"}
+
+    GATE -->|"no — the other seven"| RUN["Run handler"]
+    GATE -->|"yes — get_claim_status"| AUTH{"session.authenticated?<br/>read from the server, never from the model"}
+    AUTH -->|"no"| DENY["not_authenticated —<br/>send the model back to verify"]
+    AUTH -->|"yes"| RUN
+
+    RUN --> VER{"verify_identity"}
+    RUN --> KB{"search_knowledge_base"}
+    RUN --> ESC["escalate_to_human"]
+
+    VER -->|"number over budget"| LOCK["locked — no more guesses, escalate"]
+    VER -->|"DOB matches"| OK["authenticated —<br/>greeting owed to the next tool"]
+    VER -->|"mismatch, attempts left"| RETRY["ask again, never hint"]
+    VER -->|"mismatch, attempts gone"| LOCK
+
+    KB -->|"score above MIN_SCORE, clear margin"| ANS["answer from this text only"]
+    KB -->|"score below MIN_SCORE"| REF["refuse, offer a human"]
+    KB -->|"two topics within MIN_MARGIN"| ASK["ask which they meant"]
+    KB -->|"empty query"| REASK["ask them to repeat"]
+
+    ESC --> HRS{"In hours AND a transfer number set?"}
+    HRS -->|"yes"| LIVE["live transfer"]
+    HRS -->|"in hours, no destination"| CB1["callback within minutes"]
+    HRS -->|"out of hours"| CB2["callback next working day"]
+    LIVE --> SLACK["Ticket + warm-handoff context to Slack"]
+    CB1 --> SLACK
+    CB2 --> SLACK
+```
+
+`RUN` fans out to whichever handler was called; only the three with branching
+logic worth drawing are shown.
+
+Four things in that diagram are deliberate and easy to miss:
+
+- **The emergency scan runs on every tool call**, not just `report_emergency`.
+  It reads the raw arguments, so a crisis mentioned while asking about a claim
+  still triggers the script even if the model routed it to the wrong tool.
+- **The auth gate reads the session, not the transcript.** It is a decorator
+  (`requires_auth`) on exactly two handlers, so the security boundary is one
+  line above each one rather than a check every handler must remember.
+- **The knowledge base has four outcomes, not two.** "Ambiguous" exists so the
+  agent asks which of two topics the caller meant instead of presenting a coin
+  toss as an answer.
+- **Escalation has three outcomes, not two.** Promising to connect someone when
+  no transfer destination is configured sends them nowhere, which is what
+  happened on the first live squad call.
+
+## The two agents
+
+Both are provisioned from the same `vapi/agents.json` and talk to the same
+eight tools on the same server. Nothing in `app/` knows which one is running.
+
+```text
+                    ┌──────────────────────────────────────┐
+  caller ─────────► │  observe-claims  (entry)             │
+                    │  greets, authenticates, answers      │
+                    │  lookup, verify, claim status +      │
+                    │  documents, KB, 911, log             │
+                    └──────────────┬───────────────────────┘
+                                   │ asked for a person · verification locked
+                                   │ no account · distressed · off-topic
+                                   ▼
+                    ┌──────────────────────────────────────┐
+                    │  observe-escalation                  │
+                    │  escalate, callback, KB, 911, log    │
+                    └──────────────────────────────────────┘
+```
+
+| | |
+|---|---|
+| Assistants | 2 |
+| Tools | 6 / 5 — each gets only what its job needs |
+| Entry point | `observe-claims` |
+| Handoffs | one: claims → escalation |
+
+**Why not three, and why not one.** This was a three-agent squad —
+`observe-triage` authenticated and handed to `observe-claims-specialist`, which
+read the claim — alongside a single-assistant variant that did everything
+itself. The call records settled it. On the squad call of 18 Oct the transfer
+fired at 49.79s, immediately after `verify_identity` returned, with no caller
+turn in between: triage's whole job ended the moment verification passed, so
+the split cut one continuous exchange in half and cost about eight seconds of
+dead air. The rule that falls out of it, and the reason escalation still has
+its own agent:
+
+> Split where the conversation ends or hands off, never where it continues.
+
+A caller being escalated is already being handed over, so the pause lands
+somewhere it makes sense and can be covered by a sentence that is true. A
+caller who has just read out their date of birth is mid-exchange, and nothing
+covers a pause there. The single-assistant variant went too, because with
+triage merged back in there was nothing left to compare: one agent that greets,
+verifies and answers *is* the single assistant, plus a specialist for the one
+handoff that was always carrying something.
+
+That handoff carries the verification, the claim discussed and the topics
+covered, because the session is keyed on the call id rather than the assistant
+— so a caller who asks for a person is not put through identity checks a
+second time at the worst possible moment.
+
+Transfers are **silent by design**. The destination's description says so
+explicitly, and at length, because a live call announced "let me transfer you
+to a claims specialist" out loud three times running.
+
+Three problems the multi-agent shape caused, all still visible in the code
+that fixes them:
+
+- **Vapi ignored the structured-data schema.** It returned its own fields
+  (`call_type`, `issue_type`, `resolution`) instead of the configured ones, so
+  `intent`, `outcome` and `sentiment` landed empty on exactly the calls
+  carrying the least other information. `app/api/payloads.py` reads both shapes
+  and falls back to session state. Never depend on a provider's extraction
+  alone.
+- **The verification greeting was cut off mid-word.** The agent that ran
+  `verify_identity` handed off within a second, so "Thanks, Marcus, you're all
+  verified" reached an agent about to stop speaking — twice on live calls. The
+  sentence now belongs to whichever tool runs next; see `greeting_note`. It
+  outlived the handoff that caused it, because holding it back is also what
+  stops the name being said before the check has run.
+- **"Who dropped that?" was unanswerable.** `assistant_path` records only the
+  order agents first appear, so attributing a lost confirmation meant leaving
+  the console and reading Vapi's own call record. Each `ToolEvent` now carries
+  the agent that made it.
+
+Start a call from `/call`.
 
 ## Why it is built this way
 
@@ -172,7 +318,7 @@ app/
   tools/
     common.py          the auth gate, error shaping, safety patterns
     identity.py        lookup_customer, verify_identity
-    claims.py          get_claim_status, get_document_instructions
+    claims.py          get_claim_status (documents ride back with it)
     faq.py             search_knowledge_base
     escalation.py      escalate_to_human, record_callback_number, report_emergency
     interactions.py    log_interaction (Integration #2, in-call path)
@@ -256,9 +402,8 @@ then `python scripts/seed_sheet.py` builds and fills all three tabs.
 ```bash
 # Render blueprint is in render.yaml; secrets are entered in the dashboard.
 set SERVER_URL=https://<your-service>.onrender.com
-python scripts/provision_vapi.py --mode squad            # 3-agent squad
-python scripts/provision_vapi.py --mode single           # single assistant
-python scripts/provision_vapi.py --mode squad --dry-run  # inspect payloads
+python scripts/provision_vapi.py              # the two agents and the squad
+python scripts/provision_vapi.py --dry-run    # inspect payloads instead
 ```
 
 `vapi/agents.json` + `vapi/prompts/` are the whole agent configuration — nothing

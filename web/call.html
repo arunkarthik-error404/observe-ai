@@ -72,14 +72,10 @@
 
   <div class="card modes" id="modes">
     <div class="mode">
-      <h2>Single agent</h2>
-      <p>One assistant handles greeting, identity, claims, FAQs and escalation.</p>
-      <button data-mode="assistant">Call single agent</button>
-    </div>
-    <div class="mode">
-      <h2>Three-agent squad</h2>
-      <p>Triage authenticates, then hands off to a claims specialist, then to escalation.</p>
-      <button data-mode="squad">Call the squad</button>
+      <h2>Claims agent, with escalation</h2>
+      <p>One agent greets, authenticates and answers. It hands off only to the
+         escalation agent, and only when a person is actually needed.</p>
+      <button data-mode="squad">Start a call</button>
     </div>
   </div>
 
@@ -200,17 +196,15 @@ async function boot() {
 
 document.querySelectorAll("#modes button").forEach(button => {
   button.onclick = async () => {
-    const mode = button.dataset.mode;
-    const id = mode === "squad" ? config.squadId : config.assistantId;
-    if (!id) { setStatus(`no ${mode} id configured in .env`, "error"); return; }
+    const id = config.squadId;
+    if (!id) { setStatus("no VAPI_SQUAD_ID configured in .env", "error"); return; }
     transcriptEl.innerHTML = "";
     partial = null;
     setStatus("connecting…", "connecting");
     try {
       // The web SDK takes (assistant, overrides, squad) — a squad call passes
       // the id in the third slot with the first left undefined.
-      if (mode === "squad") await vapi.start(undefined, undefined, id);
-      else await vapi.start(id);
+      await vapi.start(undefined, undefined, id);
     } catch (e) {
       setStatus("could not start: " + (e?.message || e), "error");
       inCall(false);

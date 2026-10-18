@@ -62,7 +62,9 @@ class Settings(BaseSettings):
     # The *public* key is meant to be exposed in a browser; it can only start
     # calls, not read or change anything. The private key never leaves .env.
     vapi_public_key: str = ""
-    vapi_assistant_id: str = ""
+    # No assistant id: the squad is the only destination. VAPI_ASSISTANT_ID in
+    # an older .env is now ignored rather than offering a second call target
+    # that no longer resolves to anything.
     vapi_squad_id: str = ""
 
     # --- privacy ----------------------------------------------------------

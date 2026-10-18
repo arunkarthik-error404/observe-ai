@@ -50,7 +50,18 @@ def lookup_customer(session: CallSession, args: dict[str, Any]) -> dict[str, Any
                 "(offer to explain how), or have someone help them. Say only that someone can "
                 "help — not that you will connect or transfer them, because whether that is a "
                 "live transfer or a callback is not known yet. Do not ask for a date of birth — "
-                "there is nothing to verify against."
+                "there is nothing to verify against. "
+                # On a live call the model said "I found an account with that
+                # number" 2.8 seconds before this tool answered — in the same
+                # completion as the call itself, so it was describing a result
+                # it had not seen. That number existed, so it got away with it.
+                # The not-found path is where the same habit does damage, and
+                # it is the one place the server can see the contradiction
+                # coming, so it is the one place worth naming the recovery.
+                "And if you already told them an account was found, correct it now, in plain "
+                "words — \"sorry, I was wrong, I don't have an account for that number\" — "
+                "before you go on. An uncorrected mistake about whether they have cover with "
+                "us is worse than an awkward correction."
             ),
         }
 

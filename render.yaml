@@ -55,8 +55,6 @@ services:
       # expose; it can start calls and nothing else.
       - key: VAPI_PUBLIC_KEY
         sync: false
-      - key: VAPI_ASSISTANT_ID
-        sync: false
       - key: VAPI_SQUAD_ID
         sync: false
 

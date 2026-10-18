@@ -239,6 +239,42 @@ def test_the_record_carries_name_summary_sentiment_and_timestamp(org):
     assert body["ActivityDate"] == "2026-10-18"
 
 
+def test_the_kb_provenance_reaches_the_task(org):
+    """Found on a live call: the agent cited `claims-handbook-2026-v3 §3.2` in
+    the tool result and on the session, and the Salesforce record had nowhere
+    to put it — no field, and no key in the payload. The provenance test that
+    already existed asserts against MemoryRepository, which keeps the record
+    object whole, so a backend dropping a field is invisible to it."""
+    repo, fake = org
+    repo.write_interaction(InteractionRecord(
+        call_id="call_kb_provenance",
+        caller_phone="5552341187",
+        summary="Caller asked how to send documents.",
+        kb_consulted="How to submit documents (claims-handbook-2026-v3 §3.2)",
+    ))
+
+    assert fake.patches[0]["body"]["KB_Consulted__c"] == (
+        "How to submit documents (claims-handbook-2026-v3 §3.2)")
+
+
+def test_a_long_provenance_list_is_truncated_not_rejected(org):
+    """A 255-char field against a call that consulted six entries. Salesforce
+    rejects the whole PATCH on an over-length field, which would lose the
+    entire record over a reviewer's convenience."""
+    repo, fake = org
+    repo.write_interaction(InteractionRecord(
+        call_id="call_kb_long",
+        caller_phone="5552341187",
+        summary="Caller worked through most of the handbook.",
+        kb_consulted="; ".join(
+            f"Topic number {n} (claims-handbook-2026-v3 §{n}.1)" for n in range(1, 12)),
+    ))
+    value = fake.patches[0]["body"]["KB_Consulted__c"]
+
+    assert len(value) == 255
+    assert value.startswith("Topic number 1 (claims-handbook-2026-v3 §1.1)")
+
+
 def test_an_unverified_caller_still_gets_a_name_on_the_record(org):
     """The gap WhoId left. No Contact matches, so the lookup is absent — which
     is exactly when the name on the record is the only name there is."""

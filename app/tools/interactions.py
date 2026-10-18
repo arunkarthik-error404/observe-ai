@@ -71,18 +71,23 @@ def log_interaction(session: CallSession, args: dict[str, Any]) -> dict[str, Any
         "ok": True,
         "queued": True,
         "instruction": (
-            # Deliberately not "then say goodbye": the sign-off is Vapi's
-            # endCallMessage, spoken when the call ends. Asking for one here
-            # produced two farewells back to back on a live call.
-            "Record saved. Close the call warmly: ask if there is anything else, and when they say "
-            "no, end the call. Do not say goodbye — the sign-off is spoken for you. "
-            # This tool runs immediately before the call ends, which makes it
-            # the last place anything can be said to the model before the one
-            # filler it kept producing there. Three live calls ended "Give me a
-            # moment." / "Just a sec." and then the sign-off — a wait announced
-            # in front of a hang-up, with nothing being waited for.
-            "And put nothing in front of ending it: no \"just a sec\", no \"one moment\", no "
-            "\"give me a moment\". Nothing is loading and nobody is waiting. Their last answer, "
-            "then the call ends."
+            # This used to end with "ask if there is anything else, and when
+            # they say no, end the call", which left two actions outstanding —
+            # one of them speech — at the single point in the call where the
+            # model is most likely to collapse them. It did, in both
+            # directions: one call said "Hold on a sec. Is there anything else
+            # I can help you with?", and another issued the hang-up seven
+            # tenths of a second after this result, having never asked. The
+            # closing question now belongs to the turn *before* this tool, so
+            # what is left here is one action and no words.
+            "Record saved. The closing question is already behind you. End the call now, and "
+            "say nothing at all before you do — no \"just a sec\", no \"one moment\", no "
+            "\"give me a moment\", and no goodbye. Nothing is loading and nobody is waiting. "
+            # Naming the exact words that will play is what finally stopped the
+            # model writing its own farewell: "do not say goodbye" is a rule to
+            # remember, whereas this is a sentence it can hear already spoken.
+            "The caller will hear \"Thanks for calling Observe Insurance. Take care.\" the "
+            "moment you end it — that is the sign-off, it is automatic, and you cannot skip "
+            "it or improve on it."
         ),
     }

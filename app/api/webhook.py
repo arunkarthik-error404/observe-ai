@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
+from ..audit import audit_call, audit_summary
 from ..models import InteractionRecord, utc_now_iso
 from ..repositories import RepositoryError, repository
 from ..session import store
@@ -201,6 +202,30 @@ def _handle_end_of_call(call_id: str, message: dict[str, Any]) -> Any:
             "our_tool_ms_total": sum(tool_ms),
             "our_tool_ms_max": max(tool_ms) if tool_ms else 0,
         })
+
+    # Which of the spoken rules the model kept. Every one of these is already in
+    # the prompt with a worked example, so a finding here is not a missing rule
+    # — it is the measurement that tells us whether the prompt is being read at
+    # all. Logged rather than written to the record: it is a verdict on us, not
+    # information about the caller's claim.
+    entries = (message.get("artifact") or {}).get("messages") or message.get("messages") or []
+    names: set[str] = set()
+    if session is not None and session.customer is not None:
+        names = {session.customer.full_name, session.customer.preferred_name}
+    findings = audit_call(entries, names)
+    if findings:
+        if session is not None:
+            session.audit = findings
+        log.warning("call_audit", extra={
+            "call_id": call_id,
+            "findings": len(findings),
+            **audit_summary(findings),
+            # The quotes ride along so the failure is readable without pulling
+            # the recording; the log filter scrubs them like anything else.
+            "detail": findings[:6],
+        })
+    else:
+        log.info("call_audit", extra={"call_id": call_id, "findings": 0})
 
     try:
         repository().write_interaction(record)

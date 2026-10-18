@@ -83,6 +83,8 @@ class CallSession:
     greeting_owed: bool = False
     # Caller-perceived turn latency, filled in from the end-of-call report.
     latency: dict[str, Any] = field(default_factory=dict)
+    # Spoken rules the model broke, from the same report. See `app.audit`.
+    audit: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def authenticated(self) -> bool:
@@ -118,6 +120,7 @@ class CallSession:
             "emergency": self.emergency,
             "assistant_path": self.assistant_path,
             "latency": self.latency,
+            "audit": self.audit,
             "tool_events": [
                 {
                     "name": e.name,

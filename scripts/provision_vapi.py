@@ -8,9 +8,14 @@ re-provision away from fixed.
 
 Usage
 -----
-    python scripts/provision_vapi.py --mode single           # one assistant
-    python scripts/provision_vapi.py --mode squad            # 3-agent squad
-    python scripts/provision_vapi.py --mode single --dry-run # print payloads
+    python scripts/provision_vapi.py              # provision the squad
+    python scripts/provision_vapi.py --dry-run    # print payloads instead
+
+There used to be a `--mode single|squad` switch, and with it an ordering trap
+worth remembering: both modes claimed the same phone number, so provisioning
+single after squad silently re-pointed the number at the wrong architecture.
+The single assistant is gone and so is the switch — there is one destination
+now, and nothing to attach in the wrong order.
 
 Environment
 -----------
@@ -41,17 +46,40 @@ VAPI_DIR = ROOT / "vapi"
 API = "https://api.vapi.ai"
 INCLUDE = re.compile(r"<!--\s*include:\s*(?P<file>[\w./-]+)\s*-->")
 
+# `<!-- why ... -->` blocks are stripped on the way to the model.
+#
+# Every rule these prompts carry was already in them, verbatim, with worked
+# examples — and two live calls broke four of those rules anyway. The prompts
+# were 16-17k characters, roughly 4,400 tokens of instruction, and most of the
+# growth was not rules: it was the case history behind each one, written in so
+# the next person to edit it would know which live failure it came from.
+#
+# That history is worth keeping and worth not sending. It belongs to whoever
+# edits the file, not to a model deciding what to say next, and every
+# paragraph of it dilutes the rule it exists to justify. So it moves inside
+# `why` blocks: still in the file, still in the diff, still the first thing an
+# editor reads, and absent from the prompt.
+#
+# Deliberately NOT a plain HTML comment: includes are written as comments too,
+# and stripping every comment would silently swallow an include that failed to
+# resolve — which is exactly the failure `check_agent_config.py` watches for.
+WHY = re.compile(r"<!--\s*why\b.*?-->\s*", re.DOTALL)
+
 
 # --- prompt composition ---------------------------------------------------
 def render_prompt(relative: str) -> str:
-    """Inline `<!-- include: x.md -->` so shared rules live in exactly one file."""
+    """Inline `<!-- include: x.md -->`, drop `<!-- why ... -->`, and strip.
+
+    Shared rules live in exactly one file, and the reasoning behind them never
+    reaches the model.
+    """
     path = VAPI_DIR / relative
     text = path.read_text(encoding="utf-8")
 
     def substitute(match: re.Match[str]) -> str:
         return render_prompt(str(Path(relative).parent / match.group("file")))
 
-    return INCLUDE.sub(substitute, text).strip()
+    return WHY.sub("", INCLUDE.sub(substitute, text)).strip()
 
 
 # --- payload building -----------------------------------------------------
@@ -258,28 +286,25 @@ def tool_name_of(item: dict[str, Any]) -> str | None:
     return (item.get("function") or {}).get("name") or item.get("name")
 
 
-def attach_phone_number(api: Vapi, mode: str, ids: dict[str, str], squad_name: str) -> None:
-    """Point the inbound number at whatever this run provisioned.
+def attach_phone_number(api: Vapi, ids: dict[str, str], squad_name: str) -> None:
+    """Point the inbound number at the squad.
 
-    A number routes to exactly one destination, so `--mode` decides: provision
-    single and callers reach the one assistant, provision squad and they land
-    on triage. Both keys are always sent — assigning one without clearing the
-    other leaves a number pointing at two things.
+    `assistantId` is still sent, as null: a number routes to exactly one
+    destination, and setting one key without clearing the other leaves it
+    pointing at two things. Any number left over from the single-assistant
+    build is cleared by this.
     """
     number_id = os.getenv("VAPI_PHONE_NUMBER_ID", "").strip()
     if not number_id:
         return
-    target = ids[squad_name] if mode == "squad" else ids["observe-claims-agent"]
-    payload = ({"squadId": target, "assistantId": None} if mode == "squad"
-               else {"assistantId": target, "squadId": None})
-    number = api.patch("phone-number", number_id, payload)
-    print(f"  phone {number.get('number')} -> {mode} ({target})")
+    target = ids[squad_name]
+    number = api.patch("phone-number", number_id, {"squadId": target, "assistantId": None})
+    print(f"  phone {number.get('number')} -> squad ({target})")
 
 
 # --- entry point ----------------------------------------------------------
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=["single", "squad"], default="single")
     parser.add_argument("--dry-run", action="store_true", help="print payloads instead of calling the API")
     args = parser.parse_args()
 
@@ -294,7 +319,8 @@ def main() -> int:
     if not secret:
         print("warning: VAPI_SECRET is empty — webhook requests will be unauthenticated", file=sys.stderr)
 
-    wanted = {name: spec for name, spec in config["assistants"].items() if spec["mode"] == args.mode}
+    # Every assistant in the file, because there is only one architecture now.
+    wanted = config["assistants"]
     needed_tools = sorted({t for spec in wanted.values() for t in spec.get("tools", [])})
     tool_payloads = {t: tool_payload(t, config["tools"][t], server_url, secret) for t in needed_tools}
 
@@ -313,7 +339,7 @@ def main() -> int:
         return 2
 
     api = Vapi(key)
-    print(f"provisioning {args.mode} mode -> {server_url}")
+    print(f"provisioning {len(wanted)} assistants -> {server_url}")
 
     # Tools first: assistants reference them by id, so they have to exist.
     # Reconciling them every run is what stops the shared objects in Vapi from
@@ -327,37 +353,34 @@ def main() -> int:
         payload = assistant_payload(name, spec, config, server_url, secret, tool_ids)
         ids[name] = api.upsert("assistant", name, payload)["id"]
 
-    if args.mode == "squad":
-        squad_cfg = config["squad"]
-        order = [squad_cfg["entry"]] + [m for m in squad_cfg["members"] if m != squad_cfg["entry"]]
-        members = []
-        for member in order:
-            destinations = [
-                {
-                    "type": "assistant",
-                    "assistantName": dest["assistant"],
-                    "message": dest.get("message", ""),
-                    "description": dest["description"],
-                }
-                for dest in config["assistants"][member].get("destinations", [])
-            ]
-            entry: dict[str, Any] = {"assistantId": ids[member]}
-            if destinations:
-                entry["assistantDestinations"] = destinations
-            members.append(entry)
-        squad = api.upsert("squad", squad_cfg["name"], {"name": squad_cfg["name"], "members": members})
-        ids[squad_cfg["name"]] = squad["id"]
+    # The entry assistant goes first: Vapi takes the squad's first member as the
+    # one that answers.
+    squad_cfg = config["squad"]
+    order = [squad_cfg["entry"]] + [m for m in squad_cfg["members"] if m != squad_cfg["entry"]]
+    members = []
+    for member in order:
+        destinations = [
+            {
+                "type": "assistant",
+                "assistantName": dest["assistant"],
+                "message": dest.get("message", ""),
+                "description": dest["description"],
+            }
+            for dest in config["assistants"][member].get("destinations", [])
+        ]
+        entry: dict[str, Any] = {"assistantId": ids[member]}
+        if destinations:
+            entry["assistantDestinations"] = destinations
+        members.append(entry)
+    squad = api.upsert("squad", squad_cfg["name"], {"name": squad_cfg["name"], "members": members})
+    ids[squad_cfg["name"]] = squad["id"]
 
-    attach_phone_number(api, args.mode, ids, config["squad"]["name"])
+    attach_phone_number(api, ids, config["squad"]["name"])
 
-    # Write the ids back so the browser dialler at /call picks them up without
+    # Write the id back so the browser dialler at /call picks it up without
     # anyone copying UUIDs by hand.
-    updates = {}
-    if args.mode == "single":
-        updates["VAPI_ASSISTANT_ID"] = ids.get("observe-claims-agent", "")
-    else:
-        updates["VAPI_SQUAD_ID"] = ids.get(config["squad"]["name"], "")
-    _update_env({k: v for k, v in updates.items() if v})
+    squad_id = ids.get(config["squad"]["name"], "")
+    _update_env({"VAPI_SQUAD_ID": squad_id} if squad_id else {})
 
     print("\ndone:")
     for name, identifier in ids.items():

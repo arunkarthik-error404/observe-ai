@@ -226,6 +226,11 @@ class SalesforceRepository(ClaimsRepository):
             "Identity_Verified__c": record.authenticated,
             "Escalated__c": record.escalated,
             "Claim_Numbers__c": record.claim_ids[:255],
+            # The entries the agent answered from, each with its source
+            # document and section. Truncated rather than dropped: a long call
+            # can consult more entries than one field holds, and the first few
+            # are still enough for a reviewer to find the call's footing.
+            "KB_Consulted__c": record.kb_consulted[:255],
             "Recording_Url__c": record.recording_url[:255],
         }
         if contact_id:

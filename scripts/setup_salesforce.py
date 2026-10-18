@@ -83,6 +83,17 @@ FIELDS: dict[str, list[dict[str, Any]]] = {
         {"name": "Identity_Verified__c", "label": "Identity Verified", "type": "Checkbox"},
         {"name": "Escalated__c", "label": "Escalated", "type": "Checkbox"},
         {"name": "Claim_Numbers__c", "label": "Claim Numbers", "type": "Text", "length": 255},
+        # Which knowledge-base entries the agent read from, with the document
+        # and section each one came from. "Where did the agent get that from"
+        # is a compliance question in insurance, and the Sheets backend has
+        # carried the answer since the column was added to INTERACTION_HEADERS.
+        # Salesforce did not: this field did not exist and the Task payload had
+        # no key for it, so on the live backend the provenance was computed,
+        # attached to the session, sent to the escalation ticket — and then
+        # dropped at the write. Nothing failed, which is why it survived; the
+        # test that covers provenance asserts against MemoryRepository, which
+        # stores the record object whole and so cannot see a missing field.
+        {"name": "KB_Consulted__c", "label": "KB Consulted", "type": "Text", "length": 255},
         {"name": "Recording_Url__c", "label": "Recording URL", "type": "Url"},
         # No custom field for the transcript: Activity (the entity behind Task
         # and Event) does not allow Long Text Area custom fields at all. The

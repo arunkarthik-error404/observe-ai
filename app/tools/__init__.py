@@ -13,7 +13,7 @@ import time
 from typing import Any
 
 from ..session import CallSession, ToolEvent
-from .claims import get_claim_status, get_document_instructions
+from .claims import get_claim_status
 from .common import EMERGENCY_PATTERNS, EMERGENCY_SCRIPT, ToolHandler, log
 from .escalation import escalate_to_human, record_callback_number, report_emergency
 from .faq import search_knowledge_base
@@ -25,8 +25,9 @@ __all__ = ["REGISTRY", "dispatch", "WRITER", "EMERGENCY_SCRIPT", "EMERGENCY_PATT
 REGISTRY: dict[str, ToolHandler] = {
     "lookup_customer": lookup_customer,
     "verify_identity": verify_identity,
+    # Document instructions are not a tool of their own: they ride back with
+    # the claim status that says they are needed. See `claims.py`.
     "get_claim_status": get_claim_status,
-    "get_document_instructions": get_document_instructions,
     "search_knowledge_base": search_knowledge_base,
     "escalate_to_human": escalate_to_human,
     "record_callback_number": record_callback_number,

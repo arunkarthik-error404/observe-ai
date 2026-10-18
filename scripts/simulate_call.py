@@ -38,7 +38,8 @@ SCENARIOS: dict[str, list[Step]] = {
         ("lookup_customer", {"phone_number": "5553612234"}),
         ("verify_identity", {"date_of_birth": "04/12/1988"}),
         ("get_claim_status", {}),
-        ("get_document_instructions", {}),
+        # No second call for the documents: get_claim_status returns them with
+        # the status that says they are needed.
         ("log_interaction", {"summary": "Priya told which two documents to upload and the deadline.",
                              "sentiment": "neutral", "outcome": "documents_explained"}),
     ],
@@ -73,13 +74,15 @@ SCENARIOS: dict[str, list[Step]] = {
         ("lookup_customer", {"phone_number": "555-234-1187"}),
         ("report_emergency", {"description": "my kitchen is on fire right now"}),
     ],
-    # Squad mode: the same call id passes between three assistants. Proves the
-    # specialist inherits the verification the triage agent performed.
-    "squad": [
-        ("lookup_customer", {"phone_number": "555-693-6678"}, "observe-triage"),
-        ("verify_identity", {"date_of_birth": "January 9 1982"}, "observe-triage"),
-        ("get_claim_status", {}, "observe-claims-specialist"),
-        ("search_knowledge_base", {"query": "can I appeal a denial"}, "observe-claims-specialist"),
+    # The handoff: one call id across the only transfer there is. Proves the
+    # escalation agent inherits the verification, the claim discussed and the
+    # topics covered — so a caller who has just asked for a person is not put
+    # through identity checks a second time.
+    "handoff": [
+        ("lookup_customer", {"phone_number": "555-693-6678"}, "observe-claims"),
+        ("verify_identity", {"date_of_birth": "January 9 1982"}, "observe-claims"),
+        ("get_claim_status", {}, "observe-claims"),
+        ("search_knowledge_base", {"query": "can I appeal a denial"}, "observe-claims"),
         ("escalate_to_human", {"reason": "caller_request", "urgency": "high",
                                "notes": "Wants to appeal the denial with a person."},
          "observe-escalation"),

@@ -96,10 +96,36 @@ def test_documents_required_branch():
     status = tool(call_id, "get_claim_status")
     assert status["primary_claim"]["needs_documents"] is True
 
-    docs = tool(call_id, "get_document_instructions")
+    # One call, not two. The documents ride back with the status that says they
+    # are needed, because the server already had them when it answered.
+    docs = status["documents"]
     assert "plumber" in docs["required_documents"]
     assert docs["deadline"] == "the twenty-ninth of October"  # spoken, not ISO
     assert docs["channels"][0]["channel"] == "portal"
+    assert "recommend the portal" in status["instruction"]
+
+
+def test_a_claim_needing_nothing_carries_no_document_block():
+    """The block is the signal. Sending an empty one on every call would make
+    the model announce paperwork to a caller who owes none."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-234-1187")
+    tool(call_id, "verify_identity", date_of_birth="1979-11-03")
+
+    status = tool(call_id, "get_claim_status")
+    assert "documents" not in status
+    assert "recommend the portal" not in status["instruction"]
+
+
+def test_documents_are_found_on_a_second_claim_too():
+    """The focus claim is the first open one, which is not necessarily the one
+    waiting on paperwork."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-361-2234")
+    tool(call_id, "verify_identity", date_of_birth="1988-04-12")
+
+    status = tool(call_id, "get_claim_status")
+    assert status["documents"]["claim_id"] == "CLM-48255"
 
 
 # --- scenario 2: authentication failure ----------------------------------
@@ -533,8 +559,41 @@ def test_no_tool_asks_the_model_for_its_own_goodbye():
     tool's instruction asked for one on top of the configured one."""
     result = tool(new_call(), "log_interaction", summary="Done.", sentiment="neutral")
     instruction = result["instruction"]
-    assert "Do not say goodbye" in instruction
+    assert "no goodbye" in instruction
     assert "then say goodbye" not in instruction
+    # Naming the sentence that will play beats forbidding the category: the
+    # model can hear this one as already spoken, rather than having to
+    # remember a rule about it.
+    assert "Thanks for calling Observe Insurance. Take care." in instruction
+    assert "automatic" in instruction
+
+
+def test_a_miss_tells_the_agent_how_to_walk_back_a_premature_hit():
+    """A live call announced "I found an account with that number" 2.8s before
+    the lookup returned, in the same completion as the tool call. The number
+    happened to exist. On an unknown number the same sentence invents cover the
+    caller does not have, and this is the one path where the server can see
+    that contradiction and name the recovery."""
+    missed = tool(new_call(), "lookup_customer", phone_number="555-999-8888")
+    instruction = missed["instruction"].lower()
+
+    assert missed["found"] is False
+    assert "if you already told them an account was found, correct it now" in instruction
+    # Still no date of birth: asking would confirm the account exists.
+    assert "do not ask for a date of birth" in instruction
+
+
+def test_the_quoted_signoff_is_the_one_the_config_actually_speaks():
+    """`log_interaction` quotes the sign-off verbatim so the model treats it as
+    already said. That only works while the quote matches `endCallMessage` —
+    edit one without the other and the tool is telling the model the caller
+    will hear words the caller will not hear."""
+    import json
+    configured = json.load(open("vapi/agents.json", encoding="utf-8"))["defaults"]["endCallMessage"]
+    instruction = tool(new_call(), "log_interaction", summary="Done.",
+                       sentiment="neutral")["instruction"]
+
+    assert configured in instruction
 
 
 def test_no_tool_offers_a_connection_it_cannot_make():
@@ -807,25 +866,34 @@ def tool_as(call_id: str, assistant: str, name: str, **arguments: Any) -> dict[s
 
 # --- multi-agent (squad) --------------------------------------------------
 def test_verification_survives_the_handoff_between_agents():
-    """The case for splitting the agents rests entirely on this.
+    """The case for having a second agent at all rests entirely on this.
 
-    Vapi keeps one call id across a squad transfer, and the session is keyed on
-    that id — so the claims specialist inherits the verification the triage
-    agent performed, instead of asking the caller for their details twice.
+    Vapi keeps one call id across a squad transfer and the session is keyed on
+    that id, so the escalation agent inherits the verification the claims
+    agent performed instead of putting the caller through it twice — at the
+    worst possible moment, having just asked for a person.
+
+    This test used to prove it across a triage -> specialist handoff. That
+    handoff is gone: it fired immediately after verification with no caller
+    turn in between, so it split one continuous exchange and bought ~8s of
+    dead air. The remaining transfer is the one that was always carrying
+    something.
     """
     call_id = new_call()
 
-    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
-    verified = tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1979-11-03")
+    tool_as(call_id, "observe-claims", "lookup_customer", phone_number="555-234-1187")
+    verified = tool_as(call_id, "observe-claims", "verify_identity", date_of_birth="1979-11-03")
     assert verified["verified"] is True
+    tool_as(call_id, "observe-claims", "get_claim_status")
 
-    # ... handoff happens here, a different assistant now holds the call ...
-    status = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
-    assert status["ok"] is True, "the specialist must inherit the verified session"
-    assert status["primary_claim"]["status"] == "In Review"
+    # ... handoff happens here, the escalation agent now holds the call ...
+    escalation = tool_as(call_id, "observe-escalation", "escalate_to_human",
+                         reason="caller_request")
+    assert escalation["handoff_context"]["identity_verified"] is True
+    assert escalation["handoff_context"]["customer_name"] == "Daniel Okafor"
 
     session = store.peek(call_id)
-    assert session.assistant_path == ["observe-triage", "observe-claims-specialist"]
+    assert session.assistant_path == ["observe-claims", "observe-escalation"]
     assert session.customer.full_name == "Daniel Okafor"
 
 
@@ -835,14 +903,14 @@ def test_the_confirmation_is_owed_by_the_agent_that_stays():
     hand the call on to say it. The agent reading the next tool's instruction
     is always one that is staying."""
     call_id = new_call()
-    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
-    verified = tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1979-11-03")
+    tool_as(call_id, "observe-claims", "lookup_customer", phone_number="555-234-1187")
+    verified = tool_as(call_id, "observe-claims", "verify_identity", date_of_birth="1979-11-03")
 
     # Nothing to start saying, so nothing to be cut off.
     assert "do not announce it yet" in verified["instruction"].lower()
     assert "Daniel" not in verified["instruction"]
 
-    status = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+    status = tool_as(call_id, "observe-claims", "get_claim_status")
     assert status["instruction"].startswith("First, before anything below")
     assert "Thanks, Daniel, you're all verified" in status["instruction"]
     # The model read a stray closing quote aloud: "You're all verified.'"
@@ -853,46 +921,49 @@ def test_the_confirmation_is_owed_exactly_once():
     """When `verify_identity` and the next tool both asked for it, the caller
     heard their own name twice."""
     call_id = new_call()
-    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
-    tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1979-11-03")
+    tool_as(call_id, "observe-claims", "lookup_customer", phone_number="555-234-1187")
+    tool_as(call_id, "observe-claims", "verify_identity", date_of_birth="1979-11-03")
 
-    first = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+    first = tool_as(call_id, "observe-claims", "get_claim_status")
     assert first["instruction"].startswith("First, before anything below")
     for _ in range(3):
-        again = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+        again = tool_as(call_id, "observe-claims", "get_claim_status")
         assert not again["instruction"].startswith("First, before anything below")
 
 
-def test_a_single_assistant_is_owed_it_too():
-    """It is not a handoff repair: without a squad the same agent simply says
-    it a moment later, on the next tool instead of this one."""
+def test_the_confirmation_waits_for_the_next_tool_not_the_next_agent():
+    """It was never a handoff repair, which is why it survived the handoff
+    being removed: the same agent simply says it a moment later, on the next
+    tool instead of on `verify_identity`. That ordering is also what stops it
+    being said before the check has actually run."""
     call_id = new_call()
-    tool_as(call_id, "observe-claims-agent", "lookup_customer", phone_number="555-234-1187")
-    tool_as(call_id, "observe-claims-agent", "verify_identity", date_of_birth="1979-11-03")
-    status = tool_as(call_id, "observe-claims-agent", "get_claim_status")
+    tool_as(call_id, "observe-claims", "lookup_customer", phone_number="555-234-1187")
+    tool_as(call_id, "observe-claims", "verify_identity", date_of_birth="1979-11-03")
+    status = tool_as(call_id, "observe-claims", "get_claim_status")
     assert status["instruction"].startswith("First, before anything below")
 
 
 def test_a_verified_caller_who_only_asks_a_question_is_still_told():
     """They may never reach a claims tool at all."""
     call_id = new_call()
-    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
-    tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1979-11-03")
-    faq = tool_as(call_id, "observe-triage", "search_knowledge_base",
+    tool_as(call_id, "observe-claims", "lookup_customer", phone_number="555-234-1187")
+    tool_as(call_id, "observe-claims", "verify_identity", date_of_birth="1979-11-03")
+    faq = tool_as(call_id, "observe-claims", "search_knowledge_base",
                   query="what are your office hours")
     assert faq["instruction"].startswith("First, before anything below")
 
 
 def test_the_document_deadline_is_not_turned_back_into_figures():
-    """Only get_claim_status carried this rule, so a caller who went straight
-    to documents heard "the 20 ninth of October" and then "29 October"."""
+    """The rule used to live only on get_claim_status, so a caller who went
+    straight to documents heard "the 20 ninth of October" and then "29
+    October". Now both halves arrive together and so does the rule."""
     call_id = new_call()
     tool(call_id, "lookup_customer", phone_number="555-361-2234")
     tool(call_id, "verify_identity", date_of_birth="1988-04-12")
-    docs = tool(call_id, "get_document_instructions")
+    status = tool(call_id, "get_claim_status")
 
-    assert docs["deadline"] == "the twenty-ninth of October"
-    assert "never 29 October or October 29th" in docs["instruction"]
+    assert status["documents"]["deadline"] == "the twenty-ninth of October"
+    assert "never 29 October or October 29th" in status["instruction"]
 
 
 def test_every_tool_event_records_which_agent_made_it():
@@ -900,15 +971,15 @@ def test_every_tool_event_records_which_agent_made_it():
     provider's call record, because the session knew the agents involved but
     not which one made which call."""
     call_id = new_call()
-    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
-    tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1979-11-03")
-    tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+    tool_as(call_id, "observe-claims", "lookup_customer", phone_number="555-234-1187")
+    tool_as(call_id, "observe-claims", "verify_identity", date_of_birth="1979-11-03")
+    tool_as(call_id, "observe-claims", "get_claim_status")
 
     events = store.peek(call_id).snapshot()["tool_events"]
     assert [(e["name"], e["assistant"]) for e in events] == [
-        ("lookup_customer", "observe-triage"),
-        ("verify_identity", "observe-triage"),
-        ("get_claim_status", "observe-claims-specialist"),
+        ("lookup_customer", "observe-claims"),
+        ("verify_identity", "observe-claims"),
+        ("get_claim_status", "observe-claims"),
     ]
 
 
@@ -920,20 +991,21 @@ def test_a_premature_handoff_still_cannot_read_claim_data():
     rather than the thing the security rests on.
     """
     call_id = new_call()
-    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
+    tool_as(call_id, "observe-claims", "lookup_customer", phone_number="555-234-1187")
 
-    blocked = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+    # The escalation agent is the only other agent there is, and it does not
+    # hold this tool — but the gate is the server's, not the tool list's.
+    blocked = tool_as(call_id, "observe-escalation", "get_claim_status")
     assert blocked["error"] == "not_authenticated"
-
-    docs = tool_as(call_id, "observe-claims-specialist", "get_document_instructions")
-    assert docs["error"] == "not_authenticated"
+    # And the documents that now ride with the status are behind the same gate.
+    assert "documents" not in blocked
 
 
 def test_escalation_agent_sees_everything_the_earlier_agents_learned():
     call_id = new_call()
-    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-693-6678")
-    tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1982-01-09")
-    tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+    tool_as(call_id, "observe-claims", "lookup_customer", phone_number="555-693-6678")
+    tool_as(call_id, "observe-claims", "verify_identity", date_of_birth="1982-01-09")
+    tool_as(call_id, "observe-claims", "get_claim_status")
 
     escalation = tool_as(call_id, "observe-escalation", "escalate_to_human",
                          reason="caller_request", notes="Wants to appeal with a person.")
@@ -943,7 +1015,7 @@ def test_escalation_agent_sees_everything_the_earlier_agents_learned():
     assert "CLM-48402" in context["claims_discussed"]
 
     path = store.peek(call_id).assistant_path
-    assert path == ["observe-triage", "observe-claims-specialist", "observe-escalation"]
+    assert path == ["observe-claims", "observe-escalation"]
 
 
 def test_assistant_path_falls_back_to_the_id_when_no_name_is_sent():
@@ -1091,7 +1163,7 @@ def test_document_channels_are_spoken_not_printed():
     call_id = new_call()
     tool(call_id, "lookup_customer", phone_number="555-361-2234")
     tool(call_id, "verify_identity", date_of_birth="1988-04-12")
-    docs = tool(call_id, "get_document_instructions")
+    docs = tool(call_id, "get_claim_status")["documents"]
 
     details = " ".join(c["detail"] for c in docs["channels"])
     assert "@" not in details
@@ -1127,8 +1199,8 @@ def test_the_verification_instruction_never_mentions_a_handoff():
     verified. Let me transfer you to a claims specialist." Naming a thing to
     rule it out still puts it in the room."""
     call_id = new_call()
-    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-418-4492")
-    verified = tool_as(call_id, "observe-triage", "verify_identity",
+    tool_as(call_id, "observe-claims", "lookup_customer", phone_number="555-418-4492")
+    verified = tool_as(call_id, "observe-claims", "verify_identity",
                        date_of_birth="1965-02-28")
     instruction = verified["instruction"].lower()
 
@@ -1147,17 +1219,16 @@ def test_nothing_offers_to_send_the_caller_anything():
     call_id = new_call()
     tool(call_id, "lookup_customer", phone_number="555-361-2234")
     tool(call_id, "verify_identity", date_of_birth="1988-04-12")
-    docs = tool(call_id, "get_document_instructions")
-
-    instruction = docs["instruction"].lower()
+    instruction = tool(call_id, "get_claim_status")["instruction"].lower()
     assert "offer to text or email" not in instruction
     assert "cannot send, text or email anything" in instruction
 
-    # And no prompt may reinstate it.
+    # And no prompt may reinstate it — every prompt on disk, so a new agent
+    # cannot be added without this applying to it.
     import pathlib
-    for name in ("squad_claims.md", "single_assistant.md", "_shared_rules.md"):
-        text = pathlib.Path("vapi/prompts", name).read_text(encoding="utf-8").lower()
-        assert "offer to text or email" not in text, name
+    for path in pathlib.Path("vapi/prompts").glob("*.md"):
+        text = path.read_text(encoding="utf-8").lower()
+        assert "offer to text or email" not in text, path.name
 
 
 def test_the_claim_instruction_names_the_figure_forms_it_forbids():
@@ -1215,8 +1286,24 @@ def test_the_last_tool_before_hangup_forbids_a_parting_filler():
     call_id = new_call()
     instruction = tool(call_id, "log_interaction", outcome="status_provided",
                        summary="Checked a claim.", sentiment="neutral")["instruction"].lower()
-    assert "put nothing in front of ending it" in instruction
+    assert "say nothing at all before you do" in instruction
     assert "nobody is waiting" in instruction
+    for filler in ("just a sec", "one moment", "give me a moment"):
+        assert filler in instruction, filler
+
+
+def test_the_closing_question_is_owed_before_the_record_not_after_it():
+    """The ordering is the fix for two opposite live failures: a filler in
+    front of the closing question, and a hang-up seven tenths of a second
+    after this tool answered with the question never asked. Leaving the model
+    one action and no speech is what removes the window."""
+    call_id = new_call()
+    instruction = tool(call_id, "log_interaction", outcome="status_provided",
+                       summary="Checked a claim.", sentiment="neutral")["instruction"].lower()
+
+    assert "closing question is already behind you" in instruction
+    # And it must not re-open the window by asking for the question again.
+    assert "ask if there is anything else" not in instruction
 
 
 # --- throttling that outlives the call ------------------------------------

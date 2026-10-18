@@ -133,17 +133,18 @@ def debug_console() -> FileResponse:
 @router.get("/call")
 def call_page() -> FileResponse:
     """The dialler the caller side of the demo runs from, instead of the Vapi
-    dashboard. Keeps the demo on surfaces I control, and lets single-agent and
-    squad mode be started side by side for comparison."""
+    dashboard. Keeps the demo on surfaces I control."""
     return FileResponse(WEB_DIR / "call.html")
 
 
 @router.get("/call/config")
 def call_config() -> dict[str, Any]:
+    """`assistantId` is gone with the single-assistant build: there is one
+    destination now, the squad, and offering a second one that no longer
+    exists left the dialler able to start a call that went nowhere."""
     cfg = settings()
     return {
         "publicKey": cfg.vapi_public_key,
-        "assistantId": cfg.vapi_assistant_id,
         "squadId": cfg.vapi_squad_id,
-        "ready": bool(cfg.vapi_public_key and (cfg.vapi_assistant_id or cfg.vapi_squad_id)),
+        "ready": bool(cfg.vapi_public_key and cfg.vapi_squad_id),
     }
