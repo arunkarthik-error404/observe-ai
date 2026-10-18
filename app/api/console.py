@@ -48,20 +48,31 @@ def _data_layer_health() -> dict:
 def health(t: str | None = None, x_debug_token: str | None = Header(default=None)) -> dict[str, Any]:
     cfg = settings()
     layer = _data_layer_health()
-    if not console_unmasked(t, x_debug_token):
-        # The org's My Domain URL and the remaining API quota are free
-        # reconnaissance: one names the tenant, the other says how many calls
-        # it would take to exhaust it. Liveness does not need either.
-        layer = {k: v for k, v in layer.items() if k not in {"instance", "api_calls_remaining"}}
-    return {
+    unmasked = console_unmasked(t, x_debug_token)
+    body = {
         "ok": True,
         "backend": cfg.backend,
         "data_layer": layer,
         "secret_enforced": bool(cfg.vapi_secret),
         "slack_notifications": notifications.is_configured(),
-        "active_calls": len(store.all()),
         "time": utc_now_iso(),
     }
+    if unmasked:
+        # `active_calls` is the one field here that describes callers rather
+        # than the service. Closing /debug/calls was about not telling an
+        # anonymous reader that a call was happening — and a live count said
+        # exactly that, from an endpoint the gate does not cover, which left
+        # the disclosure public at a different URL. Omitted rather than
+        # zeroed: a number that is always 0 is a number someone will trust.
+        body["active_calls"] = len(store.all())
+    else:
+        # The org's My Domain URL and the remaining API quota are free
+        # reconnaissance: one names the tenant, the other says how many calls
+        # it would take to exhaust it. Liveness does not need either.
+        body["data_layer"] = {
+            k: v for k, v in layer.items() if k not in {"instance", "api_calls_remaining"}
+        }
+    return body
 
 
 def _view(session, unmasked: bool) -> dict[str, Any]:

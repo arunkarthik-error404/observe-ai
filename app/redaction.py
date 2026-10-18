@@ -11,11 +11,13 @@ would receive.
 Two mechanisms, because either alone leaks:
 
   * **by key** — a field named `date_of_birth` is sensitive whatever it holds,
-    and a date is impossible to classify by shape (`2026-10-18` is a timestamp,
-    `1979-11-03` is a date of birth, and nothing in the value says which).
-  * **by value** — a phone number or an email in free text (`notes`, an
-    exception message, a caller's own words) never passes through a field with
-    a helpful name.
+    whatever shape the value takes.
+  * **by value** — a phone number, an email or a date of birth in free text
+    (`notes`, an exception message, a caller's own words) never passes through
+    a field with a helpful name. `escalate_to_human`'s `notes` is written by
+    the model out of what the caller said, and it goes to Slack and to the log
+    stream, so "dob 1979-11-03" in prose reached both in clear text while the
+    same value under its own key was masked.
 
 Masks keep the last four digits of a phone and the domain of an email, because
 a redaction that destroys all debuggability gets switched off the first time
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 from typing import Any
 
 # A loose matcher for the separators humans type ("+1 (555) 234-1187",
@@ -41,6 +44,27 @@ from typing import Any
 PHONE = re.compile(r"(?<!\d)(\+?\d[\d\s().\-]{7,}\d)(?!\d)")
 MIN_PHONE_DIGITS = 10  # a US number without its country code
 EMAIL = re.compile(r"\b[\w.+%-]+@[\w-]+\.[\w.-]+\b")
+
+# A date in prose cannot be classified by shape — `2026-10-18` is a timestamp
+# and `1979-11-03` is a date of birth — but it can be classified by age. Log
+# timestamps are current and a claim's incident date is recent, while a date of
+# birth is decades old, so only dates at least this far back are masked. The
+# cost of the threshold is that a genuinely old business date reads as `[dob]`;
+# that is the right side to err on, and it keeps every timestamp intact.
+MIN_DOB_AGE_YEARS = 13
+_MONTHS = ("january|february|march|april|may|june|july|august|september"
+           "|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec")
+DATE_PATTERNS = (
+    # 1979-11-03, 1979/11/03
+    re.compile(r"(?<!\d)(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?!\d)"),
+    # 11/03/1979, 3-11-1979 — day and month are interchangeable here because
+    # only the year decides the outcome.
+    re.compile(r"(?<!\d)(?:0?[1-9]|[12]\d|3[01])[-/.](?:0?[1-9]|[12]\d|3[01])[-/.](?:19|20)\d{2}(?!\d)"),
+    # November 3, 1979 — the spoken forms, which is how a caller gives it.
+    re.compile(rf"\b(?:{_MONTHS})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+(?:19|20)\d{{2}}\b", re.I),
+    re.compile(rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+(?:{_MONTHS})\.?,?\s+(?:19|20)\d{{2}}\b", re.I),
+)
+_YEAR = re.compile(r"(?:19|20)\d{2}")
 
 # Field names whose *value* is sensitive regardless of its shape.
 PHONE_KEYS = {"phone", "caller_phone", "phone_number", "claimed_phone",
@@ -97,9 +121,23 @@ def _mask_if_phone(match: re.Match[str]) -> str:
     return mask_phone(raw)
 
 
+def _mask_if_birth_date(match: re.Match[str]) -> str:
+    """Only mask a date old enough to be a date of birth. See MIN_DOB_AGE_YEARS."""
+    found = _YEAR.search(match.group(0))
+    if not found:
+        return match.group(0)
+    if date.today().year - int(found.group(0)) < MIN_DOB_AGE_YEARS:
+        return match.group(0)
+    return "[dob]"
+
+
 def scrub_text(text: str) -> str:
     """Redact anything that looks like PII inside free text."""
     text = EMAIL.sub(lambda m: mask_email(m.group(0)), text)
+    # Before the phone pass, so a date is never handed to a masker that would
+    # rewrite it digit-wise instead of removing it.
+    for pattern in DATE_PATTERNS:
+        text = pattern.sub(_mask_if_birth_date, text)
     return PHONE.sub(_mask_if_phone, text)
 
 

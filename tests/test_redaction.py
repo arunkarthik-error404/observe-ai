@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date
 
 from app.logging_conf import JsonFormatter
 from app.redaction import RedactingFilter, mask_name, mask_phone, redact, scrub_text
@@ -57,8 +58,8 @@ def test_redaction_never_mutates_the_original():
 
 # --- by key ---------------------------------------------------------------
 def test_a_date_of_birth_is_removed_entirely():
-    """Unlike a phone, no part of a DOB is worth keeping, and no regex can
-    tell `1979-11-03` from a timestamp — only the field name can."""
+    """Unlike a phone, no part of a DOB is worth keeping, and the field name
+    settles it whatever shape the value takes."""
     assert redact("1979-11-03", "date_of_birth") == "[dob]"
     assert redact("November 3 1979", "dob") == "[dob]"
     # a real timestamp in a neighbouring field is untouched
@@ -87,6 +88,39 @@ def test_short_numbers_are_not_mistaken_for_phones():
     """Durations, counts and amounts must survive."""
     for safe in ("attempt 3 of 3", "179 seconds", "$2,400.00", "v62.0"):
         assert scrub_text(safe) == safe
+
+
+def test_a_date_of_birth_in_prose_is_masked_too():
+    """The gap the key-based pass left. `escalate_to_human`'s `notes` is
+    written by the model out of what the caller said and travels to Slack and
+    to the log stream, so a DOB spoken mid-sentence reached both in clear text
+    while the same value under its own key was masked."""
+    notes = "Caller gave dob 1979-11-03 and wants a callback"
+    assert "1979-11-03" not in scrub_text(notes)
+    assert "[dob]" in scrub_text(notes)
+    # The formats a caller actually gives it in.
+    for raw in ("11/03/1979", "3-11-1979", "November 3, 1979", "3rd Nov 1979",
+                "February 28 1965", "1965/02/28"):
+        assert scrub_text(f"born {raw}") == "born [dob]", raw
+
+
+def test_timestamps_and_recent_dates_survive_the_dob_pass():
+    """The whole reason dates were left alone: masking by shape destroys the
+    log stream. Age is the discriminator, so anything current is untouched."""
+    year = date.today().year
+    for safe in (f"{year}-10-18T11:04:00Z", f"{year}-10-18", f"10/18/{year}",
+                 f"October 18, {year}", f"incident on {year - 2}-03-12"):
+        assert scrub_text(safe) == safe, safe
+
+
+def test_a_dob_in_notes_does_not_reach_the_log_stream():
+    """End to end through the real filter, on the field that carries it."""
+    logged = emit(call_id="abc-123", ticket={
+        "notes": "Marcus, dob 1979-11-03, call 555-234-1187",
+    })["ticket"]
+    assert "1979-11-03" not in logged["notes"]
+    assert "555-234-1187" not in logged["notes"]
+    assert "[dob]" in logged["notes"]
 
 
 def test_masks_keep_enough_to_follow_one_caller():
@@ -196,6 +230,34 @@ def test_health_hides_the_org_and_its_remaining_quota(monkeypatch):
         assert "api_calls_remaining" not in layer
         assert layer["ok"] is True  # still answers the question it exists for
     finally:
+        config.settings.cache_clear()
+
+
+def test_health_does_not_report_whether_a_call_is_happening(monkeypatch):
+    """Closing /debug/calls was about not telling an anonymous reader that a
+    call was in progress. `active_calls` said exactly that from an endpoint the
+    gate does not cover, leaving the disclosure public at a different URL."""
+    from fastapi.testclient import TestClient
+
+    from app import config
+    from app.main import app
+    from app.session import store
+
+    config.settings.cache_clear()
+    monkeypatch.setenv("DEBUG_TOKEN", "letmein")
+    try:
+        client = TestClient(app)
+        store.reset()
+        store.get("call_probe")
+
+        anon = client.get("/health").json()
+        assert "active_calls" not in anon
+        assert anon["ok"] is True  # still answers the question it exists for
+
+        named = client.get("/health", params={"t": "letmein"}).json()
+        assert named["active_calls"] == 1
+    finally:
+        store.reset()
         config.settings.cache_clear()
 
 
