@@ -11,3 +11,6 @@ __pycache__/
 notes/
 
 logs/
+
+# Demo runbook and interview prep: ours, not the reviewer's.
+docs/

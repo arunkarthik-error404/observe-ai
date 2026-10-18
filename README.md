@@ -39,8 +39,9 @@ when it should, and writes the call back to the customer's record.
 | Emergency | regex guard + explicit tool | 911 script first, claim business stops, call ends |
 | Out of scope | policy changes, quotes, legal/medical advice | declines and offers a human rather than guessing |
 
-The first four are the ones the assessment asks for. `docs/DEMO.md` is the
-runbook, with a persona and a script for each.
+The first four are the ones the assessment asks for. Each has a seeded persona
+behind it, and `scripts/simulate_call.py` replays any of them against a running
+server without spending voice minutes.
 
 Bonuses: multi-agent orchestration (3-agent squad), knowledge base with a
 refusal threshold, and a third integration (Slack) — plus two interchangeable
@@ -180,7 +181,6 @@ web/                   debug console and browser dialler
 scripts/               provisioning, org setup, diagnostics, scenario replay
 tests/                 70 tests, no credentials required
 .github/workflows/     CI: tests, lint, agent config, knowledge base, secrets
-docs/DEMO.md           demo runbook
 ```
 
 ## Run it
