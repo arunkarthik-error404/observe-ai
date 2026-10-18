@@ -43,6 +43,31 @@ def token_matches(token: str) -> bool:
     return bool(cfg.vapi_secret) and hmac.compare_digest(token, cfg.vapi_secret)
 
 
+def require_console_access(token: str | None, header: str | None, request: Request) -> None:
+    """Gate the debug API in production. Open locally.
+
+    Redaction alone left the endpoint publicly readable: an anonymous caller
+    still learned that a call was happening, whether it verified, and which
+    claim numbers were discussed — claim ids are in redaction's ALLOW list,
+    which is right for a log line and wrong for the open internet. Masking the
+    credentials closed the leak; it did not close the disclosure.
+
+    Either credential opens it, because anyone holding the webhook secret can
+    already write records through it, so withholding read access from them
+    protects nothing.
+    """
+    cfg = settings()
+    if not cfg.require_secret:
+        return
+    for expected in (cfg.debug_token.strip(), cfg.vapi_secret.strip()):
+        if not expected:
+            continue
+        if any(s and hmac.compare_digest(s, expected) for s in (token, header)):
+            return
+    log.warning("console_rejected", extra={"auth_headers_seen": auth_header_names(request)})
+    raise HTTPException(status_code=401, detail="debug console requires a token")
+
+
 def console_unmasked(token: str | None, header: str | None) -> bool:
     """Whether this caller may see a call snapshot with the PII still in it.
 

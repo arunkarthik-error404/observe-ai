@@ -70,6 +70,7 @@
   <h1>Claims Agent · live call console</h1>
   <span class="chip" id="health">checking…</span>
   <span class="chip" id="backend"></span>
+  <span class="chip" id="masked"></span>
   <div class="spacer"></div>
   <a class="chip" href="/call">browser dialler →</a>
   <span class="chip" id="tick">—</span>
@@ -84,16 +85,29 @@ const state = { selected: null, calls: [], open: new Set() };
 const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 const ago = s => s < 60 ? `${Math.round(s)}s ago` : `${Math.floor(s / 60)}m ago`;
 
+// Opened as /debug?t=<token>, the page carries that token on to the API it
+// polls. Both endpoints need it in production: one to be allowed in at all,
+// the other to be shown real values instead of asterisks.
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+const api = path => path + (TOKEN ? `?t=${encodeURIComponent(TOKEN)}` : "");
+
 async function poll() {
   try {
     const [health, calls] = await Promise.all([
-      fetch("health").then(r => r.json()),
-      fetch("debug/calls").then(r => r.json()),
+      fetch(api("health")).then(r => r.json()),
+      fetch(api("debug/calls")).then(r => r.ok ? r.json()
+        : Promise.reject(new Error(r.status === 401 ? "locked" : `HTTP ${r.status}`))),
     ]);
     const live = health.data_layer?.ok !== false;
     const hEl = document.getElementById("health");
     hEl.textContent = live ? "data layer ok" : "data layer DOWN";
     hEl.className = "chip " + (live ? "ok" : "bad");
+    // Say which it is. A console quietly showing asterisks looks like a bug.
+    const mEl = document.getElementById("masked");
+    if (mEl) {
+      mEl.textContent = calls.redacted ? "PII masked" : "PII visible";
+      mEl.className = "chip " + (calls.redacted ? "" : "bad");
+    }
     document.getElementById("backend").textContent = `backend: ${health.backend}`;
     document.getElementById("tick").textContent = new Date().toLocaleTimeString();
     state.calls = calls.calls || [];
@@ -101,7 +115,14 @@ async function poll() {
     renderList(); renderDetail();
   } catch (err) {
     const hEl = document.getElementById("health");
-    hEl.textContent = "server unreachable"; hEl.className = "chip bad";
+    const locked = String(err && err.message) === "locked";
+    hEl.textContent = locked ? "locked — open /debug?t=<token>" : "server unreachable";
+    hEl.className = "chip bad";
+    if (locked) {
+      document.getElementById("detail").innerHTML =
+        '<div class="empty">This console needs a token in production.<br>' +
+        'Open it as <code>/debug?t=&lt;DEBUG_TOKEN&gt;</code>.</div>';
+    }
   }
 }
 

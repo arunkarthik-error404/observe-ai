@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
 from .. import notifications
@@ -20,7 +20,7 @@ from ..models import utc_now_iso
 from ..redaction import redact_snapshot
 from ..repositories import repository
 from ..session import store
-from .security import console_unmasked
+from .security import console_unmasked, require_console_access
 
 router = APIRouter(tags=["console"])
 WEB_DIR = Path(__file__).resolve().parents[2] / "web"
@@ -80,8 +80,9 @@ def _view(session, unmasked: bool) -> dict[str, Any]:
 
 
 @router.get("/debug/calls")
-def debug_calls(t: str | None = None,
+def debug_calls(request: Request, t: str | None = None,
                 x_debug_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_console_access(t, x_debug_token, request)
     unmasked = console_unmasked(t, x_debug_token)
     sessions = store.all()
     return {
@@ -92,8 +93,9 @@ def debug_calls(t: str | None = None,
 
 
 @router.get("/debug/calls/{call_id}")
-def debug_call(call_id: str, t: str | None = None,
+def debug_call(call_id: str, request: Request, t: str | None = None,
                x_debug_token: str | None = Header(default=None)) -> dict[str, Any]:
+    require_console_access(t, x_debug_token, request)
     session = store.peek(call_id)
     if session is None:
         raise HTTPException(status_code=404, detail="no such call")

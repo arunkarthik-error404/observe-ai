@@ -117,10 +117,15 @@ def _concluded_outcome(session: Any) -> str:
     forward on the session is what actually stops the downgrade, because the
     Salesforce `Subject` is derived from this value and is sent on every write
     — unlike the custom fields, an empty outcome does not leave the stored one
-    alone. A session lost to its TTL or a restart before the end-of-call report
-    arrives therefore still writes a generic subject over a specific one; the
-    window is one call long, and closing it properly means moving the outcome
-    off `Subject` and into a field of its own.
+    alone.
+
+    The record no longer loses the answer when a session is lost to its TTL or
+    a restart: `Call_Outcome__c` holds it, and an empty custom field is dropped
+    from the PATCH body rather than written, so the stored value survives.
+    `Subject` still degrades to a generic caption in that window. That is
+    cosmetic and deliberate — omitting Subject instead would leave a
+    blank-subject Task on the activity timeline for any call that produced no
+    outcome at all, which is worse to look at than a vague one.
     """
     if session is None or session.auth_outcome == "pending":
         return ""

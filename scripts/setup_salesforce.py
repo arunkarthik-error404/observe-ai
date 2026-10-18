@@ -60,6 +60,12 @@ FIELDS: dict[str, list[dict[str, Any]]] = {
          "length": 64, "externalId": True, "unique": True},
         {"name": "Call_Sentiment__c", "label": "Call Sentiment", "type": "Text", "length": 20},
         {"name": "Call_Intent__c", "label": "Call Intent", "type": "Text", "length": 255},
+        # How the call resolved. Previously this lived only in the Subject,
+        # which is a problem because Subject is sent on every write while an
+        # empty custom field is omitted: a second write with no outcome
+        # overwrote "Claims call - status_provided" with a generic one. In its
+        # own field, an outcome we do not have leaves the stored one alone.
+        {"name": "Call_Outcome__c", "label": "Call Outcome", "type": "Text", "length": 200},
         {"name": "Identity_Verified__c", "label": "Identity Verified", "type": "Checkbox"},
         {"name": "Escalated__c", "label": "Escalated", "type": "Checkbox"},
         {"name": "Claim_Numbers__c", "label": "Claim Numbers", "type": "Text", "length": 255},

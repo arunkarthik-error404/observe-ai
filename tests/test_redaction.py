@@ -197,3 +197,58 @@ def test_health_hides_the_org_and_its_remaining_quota(monkeypatch):
         assert layer["ok"] is True  # still answers the question it exists for
     finally:
         config.settings.cache_clear()
+
+
+def test_the_debug_api_is_closed_in_production(monkeypatch):
+    """Redaction closed the credential leak but left the endpoint publicly
+    readable — an anonymous caller still learned a call was happening, whether
+    it verified, and which claim numbers were discussed. Claim ids are in
+    redaction's ALLOW list, which is right for a log line and wrong for the
+    open internet."""
+    from fastapi.testclient import TestClient
+
+    from app import config
+    from app.main import app
+    from app.session import store
+
+    config.settings.cache_clear()
+    monkeypatch.setenv("REQUIRE_SECRET", "true")
+    monkeypatch.setenv("VAPI_SECRET", "webhook-secret")
+    monkeypatch.setenv("DEBUG_TOKEN", "console-token")
+    try:
+        client = TestClient(app)
+        store.reset()
+        store.get("call_probe").claims_discussed.append("CLM-48310")
+
+        assert client.get("/debug/calls").status_code == 401
+        assert client.get("/debug/calls/call_probe").status_code == 401
+        assert "CLM-48310" not in client.get("/debug/calls").text
+
+        # Either credential opens it: anyone holding the webhook secret can
+        # already write records through it.
+        for token in ("console-token", "webhook-secret"):
+            assert client.get("/debug/calls", params={"t": token}).status_code == 200
+            assert client.get("/debug/calls",
+                              headers={"x-debug-token": token}).status_code == 200
+        # Only the console token lifts the mask.
+        assert client.get("/debug/calls", params={"t": "webhook-secret"}).json()["redacted"] is True
+        assert client.get("/debug/calls", params={"t": "console-token"}).json()["redacted"] is False
+    finally:
+        store.reset()
+        config.settings.cache_clear()
+
+
+def test_the_debug_api_stays_open_locally(monkeypatch):
+    """REQUIRE_SECRET off means a developer's machine, where the console being
+    one click away is the whole point of it."""
+    from fastapi.testclient import TestClient
+
+    from app import config
+    from app.main import app
+
+    config.settings.cache_clear()
+    monkeypatch.setenv("REQUIRE_SECRET", "false")
+    try:
+        assert TestClient(app).get("/debug/calls").status_code == 200
+    finally:
+        config.settings.cache_clear()

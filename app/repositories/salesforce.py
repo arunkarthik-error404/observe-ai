@@ -205,6 +205,13 @@ class SalesforceRepository(ClaimsRepository):
             "ActivityDate": record.timestamp[:10] if record.timestamp else None,
             "Call_Sentiment__c": record.sentiment,
             "Call_Intent__c": record.intent[:255],
+            # The authoritative outcome. Subject still carries it for the
+            # activity timeline, but Subject is sent on every write and this is
+            # not — so when the second write has no outcome to offer, the
+            # stored one survives here even as the Subject degrades to a
+            # generic label. The record keeps the answer; only the caption
+            # loses it.
+            "Call_Outcome__c": record.outcome[:200],
             "Identity_Verified__c": record.authenticated,
             "Escalated__c": record.escalated,
             "Claim_Numbers__c": record.claim_ids[:255],

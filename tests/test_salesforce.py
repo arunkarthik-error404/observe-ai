@@ -342,3 +342,24 @@ def test_health_reports_the_remaining_api_quota(org):
 def test_soql_values_are_escaped(raw, expected):
     """A quote in a value would otherwise end the literal and change the query."""
     assert soql_escape(raw) == expected
+
+
+def test_the_outcome_survives_a_write_that_does_not_know_it(org):
+    """Subject is sent on every write, so a second write with no outcome used
+    to overwrite "Claims call - status_provided" with a generic caption and
+    the record lost the answer. In its own field an empty outcome is dropped
+    from the body instead, so the stored one stands."""
+    repo, fake = org
+    repo.write_interaction(InteractionRecord(
+        call_id="call-outcome", caller_phone="5552341187",
+        outcome="status_provided", summary="Checked a claim."))
+    assert fake.patches[0]["body"]["Call_Outcome__c"] == "status_provided"
+
+    # The end-of-call report arriving after a restart: no session, no outcome.
+    repo.write_interaction(InteractionRecord(
+        call_id="call-outcome", caller_phone="5552341187", outcome=""))
+    body = fake.patches[1]["body"]
+    assert "Call_Outcome__c" not in body, "an empty outcome must not overwrite a real one"
+    # The caption still degrades. That is the cosmetic half, accepted on
+    # purpose: omitting Subject would leave a blank-subject Task instead.
+    assert body["Subject"] == "Claims call — handled"
