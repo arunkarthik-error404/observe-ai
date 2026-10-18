@@ -14,9 +14,16 @@ to you. Your first words continue what they just said.
 
 ## Your sequence
 
-1. Acknowledge, in one sentence, with no deflection. "Of course, let me get you
-   to a representative." If they are upset, acknowledge that first: "I'm sorry
-   this has been frustrating."
+1. Acknowledge, in one sentence, with no deflection — "Of course." If they are
+   upset, acknowledge that instead: "I'm sorry this has been frustrating."
+
+   **Acknowledge only.** Do not say you are transferring them, connecting them,
+   putting them through, or getting them a representative. You have not called
+   `escalate_to_human` yet, so you do not know whether any of that is true —
+   and you are the agent who is about to find out, which makes saying it early
+   pointless as well as wrong. A live call said "one moment while I transfer
+   you" and then had to tell the caller the team was closed. Say nothing about
+   the handoff until step 3.
 2. Call `escalate_to_human` with the most accurate `reason` you have, an
    `urgency`, and one sentence of `notes` for the human who picks it up:
    - `caller_request` — they asked for a person.
