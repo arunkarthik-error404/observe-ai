@@ -19,6 +19,8 @@
   .spacer { flex: 1; }
   .chip { font: 12px var(--mono); padding: 3px 9px; border-radius: 999px;
           border: 1px solid var(--line); color: var(--muted); background: var(--panel-2); }
+  a.chip { text-decoration: none; }
+  a.chip:hover { color: var(--accent); border-color: var(--accent); }
   .chip.ok { color: var(--ok); border-color: #2a4c3e; }
   .chip.bad { color: var(--bad); border-color: #4c2a2a; }
   main { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 56px); }
@@ -63,6 +65,7 @@
   <span class="chip" id="health">checking…</span>
   <span class="chip" id="backend"></span>
   <div class="spacer"></div>
+  <a class="chip" href="/call">browser dialler →</a>
   <span class="chip" id="tick">—</span>
 </header>
 <main>

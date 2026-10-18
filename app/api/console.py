@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from .. import notifications
 from ..config import settings
@@ -67,6 +67,18 @@ def debug_call(call_id: str) -> dict[str, Any]:
     if session is None:
         raise HTTPException(status_code=404, detail="no such call")
     return session.snapshot()
+
+
+@router.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    """Send the bare domain to the console.
+
+    This is an API, so `/` had no route and FastAPI answered `{"detail":"Not
+    Found"}` — correct, and indistinguishable from a broken deploy to anyone
+    who opens the URL expecting a service to be there. The console is the page
+    worth landing on anyway.
+    """
+    return RedirectResponse("/debug")
 
 
 @router.get("/debug")

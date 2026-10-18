@@ -482,6 +482,15 @@ def test_url_token_authenticates_assistant_level_messages(monkeypatch):
         config.settings.cache_clear()
 
 
+def test_the_bare_domain_lands_on_the_console():
+    """`{"detail":"Not Found"}` at / reads as a broken deploy to anyone who
+    opens the URL, even though it is the correct answer for an API."""
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == "/debug"
+    assert client.get("/").status_code == 200
+
+
 def test_health_reports_the_active_backend():
     body = client.get("/health").json()
     assert body["ok"] is True
