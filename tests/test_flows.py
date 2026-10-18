@@ -486,3 +486,22 @@ def test_health_reports_the_active_backend():
     body = client.get("/health").json()
     assert body["ok"] is True
     assert body["backend"] == "memory"
+
+
+def test_pasted_settings_are_stripped_of_whitespace(monkeypatch):
+    """A credential pasted into a hosting dashboard can carry a newline.
+
+    This is from production: SF_LOGIN_URL arrived with a trailing "\\n" and
+    every Salesforce request failed on an unprintable character in the URL.
+    """
+    from app import config
+
+    config.settings.cache_clear()
+    monkeypatch.setenv("SF_LOGIN_URL", "https://example.my.salesforce.com\n")
+    monkeypatch.setenv("VAPI_SECRET", "  s3cret  ")
+    try:
+        loaded = config.Settings()
+        assert loaded.sf_login_url == "https://example.my.salesforce.com"
+        assert loaded.vapi_secret == "s3cret"
+    finally:
+        config.settings.cache_clear()

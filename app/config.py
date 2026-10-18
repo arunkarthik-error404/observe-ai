@@ -3,11 +3,28 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _strip_whitespace(cls, value: object) -> object:
+        """Trim surrounding whitespace off every string setting.
+
+        Credentials reach production by being pasted into a web form, and a
+        multi-line paste box will happily keep the trailing newline. That cost
+        a deploy once: SF_LOGIN_URL came back with a "\\n" on the end and every
+        Salesforce call died on `Invalid non-printable ASCII character in URL`
+        — an error that names the character but not the setting it came from.
+
+        Stripping is safe for all of these: none is whitespace-significant at
+        its edges, and a PEM key keeps the newlines in its middle.
+        """
+        return value.strip() if isinstance(value, str) else value
 
     # --- data layer -------------------------------------------------------
     # "sheets" talks to Google Sheets, "salesforce" to a Salesforce org, and
