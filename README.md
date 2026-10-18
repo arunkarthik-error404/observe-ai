@@ -310,36 +310,3 @@ read a mid-sentence pause as a complete answer and ended the call),
 `request-start` messages cover tool round-trips so a lookup never sounds like
 dead air, and a per-call contact cache keeps a three-tool turn from making three
 CRM round-trips.
-
-## Known limits and what comes next
-
-- **Session state is in-process.** Auth state lives in a dict keyed by call id,
-  which is correct for one instance and wrong for two: Vapi sends each tool call
-  as its own request, so a load balancer can route `verify_identity` to one
-  replica and `get_claim_status` to another, and the second one has never heard
-  of the caller. Redis is the fix, but the work is not only swapping the store —
-  tools mutate the session in place, which stops persisting anything once the
-  object is deserialized per request, and the `threading.Lock` stops meaning
-  anything once the race is between processes.
-- **DOB as a second factor is weak**, and the attempt limit is per call rather
-  than per caller — redialling resets it. Production wants an OTP to the number
-  on file, or ANI matching plus a knowledge factor, and rate limiting keyed to
-  the phone number.
-- **Retrieval is lexical.** The right call for twelve entries; a real knowledge
-  base wants embeddings, a reranker and chunk-level citations.
-- **No automated evals on the conversation itself.** The tests prove the server
-  behaves and `check_agent_config.py` proves the wiring holds, but nothing
-  proves a prompt edit did not make the agent *worse*. Doing it properly needs a
-  model in the loop — either Vapi's chat API, which text-drives the real
-  assistant but requires a funded org, or the prompts replayed against an LLM
-  directly. `scripts/simulate_call.py` is the skeleton either would hang off.
-- **Redaction narrows what is logged, not how long it is kept.** There is no
-  retention policy, and the hosting provider's log store is wherever it is.
-  Real claims data needs both.
-- **Recordings stay in Vapi's bucket.** The transcript is written to Salesforce,
-  but the audio is behind authenticated URLs; production would point Vapi at an
-  owned S3 bucket, which is also where the compliance conversation belongs.
-- **Next:** an eval suite run against prompt changes in CI, Spanish end to end
-  (prompts, voice, transcriber and knowledge base, not just the prompt), and a
-  real CTI screen pop — the Slack button is the cheap half, but it does not
-  follow the caller onto an agent's screen as the call arrives.
