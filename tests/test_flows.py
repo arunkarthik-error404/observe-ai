@@ -762,39 +762,70 @@ def test_verification_survives_the_handoff_between_agents():
     assert session.customer.full_name == "Daniel Okafor"
 
 
-def test_the_verification_confirmation_survives_the_handoff_too():
-    """A live call went from a date of birth straight to claim details.
-
-    `verify_identity` returned "thank the caller by name", triage transferred
-    580ms later without speaking, and the specialist is told never to greet —
-    so the caller was never told the security check had passed. The duty is
-    re-issued to whichever agent actually speaks.
-    """
+def test_the_confirmation_is_owed_by_the_agent_that_stays():
+    """Two live calls had the squad transfer sever this sentence mid-word —
+    "You're all" — because `verify_identity` asked the agent that was about to
+    hand the call on to say it. The agent reading the next tool's instruction
+    is always one that is staying."""
     call_id = new_call()
     tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
     verified = tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1979-11-03")
-    # The instruction may not read as "greet them, or else get on with it".
-    assert "before anything else" in verified["instruction"].lower()
-    assert "Daniel" in verified["instruction"]
+
+    # Nothing to start saying, so nothing to be cut off.
+    assert "do not announce it yet" in verified["instruction"].lower()
+    assert "Daniel" not in verified["instruction"]
 
     status = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
-    instruction = status["instruction"]
-    assert instruction.startswith("The caller was verified a moment ago")
-    assert "Daniel" in instruction
-    # Said once. A second claim lookup must not ask for it again.
-    again = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
-    assert not again["instruction"].startswith("The caller was verified a moment ago")
+    assert status["instruction"].startswith("First, before anything below")
+    assert "Thanks, Daniel, you're all verified" in status["instruction"]
+    # The model read a stray closing quote aloud: "You're all verified.'"
+    assert '"' not in status["instruction"].split("Nobody has told them")[0]
 
 
-def test_one_assistant_doing_everything_is_not_told_to_re_confirm():
-    """The reminder exists because a handoff intervened. Without one, the agent
-    that was told to say it is the agent that speaks, and repeating the duty
-    would just invite it to say the same thing twice."""
+def test_the_confirmation_is_owed_exactly_once():
+    """When `verify_identity` and the next tool both asked for it, the caller
+    heard their own name twice."""
+    call_id = new_call()
+    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
+    tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1979-11-03")
+
+    first = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+    assert first["instruction"].startswith("First, before anything below")
+    for _ in range(3):
+        again = tool_as(call_id, "observe-claims-specialist", "get_claim_status")
+        assert not again["instruction"].startswith("First, before anything below")
+
+
+def test_a_single_assistant_is_owed_it_too():
+    """It is not a handoff repair: without a squad the same agent simply says
+    it a moment later, on the next tool instead of this one."""
     call_id = new_call()
     tool_as(call_id, "observe-claims-agent", "lookup_customer", phone_number="555-234-1187")
     tool_as(call_id, "observe-claims-agent", "verify_identity", date_of_birth="1979-11-03")
     status = tool_as(call_id, "observe-claims-agent", "get_claim_status")
-    assert not status["instruction"].startswith("The caller was verified a moment ago")
+    assert status["instruction"].startswith("First, before anything below")
+
+
+def test_a_verified_caller_who_only_asks_a_question_is_still_told():
+    """They may never reach a claims tool at all."""
+    call_id = new_call()
+    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-234-1187")
+    tool_as(call_id, "observe-triage", "verify_identity", date_of_birth="1979-11-03")
+    faq = tool_as(call_id, "observe-triage", "search_knowledge_base",
+                  query="what are your office hours")
+    assert faq["instruction"].startswith("First, before anything below")
+
+
+def test_the_document_deadline_is_not_turned_back_into_figures():
+    """Only get_claim_status carried this rule, so a caller who went straight
+    to documents heard "the 20 ninth of October" and then "29 October"."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-361-2234")
+    tool(call_id, "verify_identity", date_of_birth="1988-04-12")
+    docs = tool(call_id, "get_document_instructions")
+
+    assert docs["deadline"] == "the twenty-ninth of October"
+    assert "never 29 October or October 29th" in docs["instruction"]
 
 
 def test_every_tool_event_records_which_agent_made_it():
@@ -1036,7 +1067,9 @@ def test_the_verification_instruction_never_mentions_a_handoff():
 
     for word in ("handoff", "hand off", "transfer", "specialist", "colleague"):
         assert word not in instruction, f"{word!r} must not be put in the model's head here"
-    assert "Marcus" in verified["instruction"]
+    # And no name either: the sentence itself has moved to the next tool, so
+    # there is nothing here to begin saying and be cut off halfway through.
+    assert "Marcus" not in verified["instruction"]
 
 
 def test_nothing_offers_to_send_the_caller_anything():

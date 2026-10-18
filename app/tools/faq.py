@@ -10,6 +10,7 @@ from typing import Any
 
 from ..knowledge import search
 from ..session import CallSession
+from .claims import greeting_note
 
 
 def search_knowledge_base(session: CallSession, args: dict[str, Any]) -> dict[str, Any]:
@@ -17,4 +18,8 @@ def search_knowledge_base(session: CallSession, args: dict[str, Any]) -> dict[st
     session.note_intent("faq")
     result = search(query)
     result["ok"] = True
+    # A caller who verifies and then asks a general question reaches no claims
+    # tool, so without this the confirmation they are owed never gets said.
+    # No-op unless one is outstanding.
+    result["instruction"] = greeting_note(session) + result["instruction"]
     return result

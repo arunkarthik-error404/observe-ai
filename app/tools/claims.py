@@ -28,32 +28,30 @@ SUBMISSION_CHANNELS = [
 
 
 def greeting_note(session: CallSession) -> str:
-    """A reminder to confirm the caller by name, for the agent that speaks next.
+    """The sentence that tells the caller the security check passed.
 
-    In squad mode `verify_identity` returns to the triage agent, which then
-    transfers — on a live call, 580ms later, without saying anything. The
-    specialist that picks up is told never to greet, correctly, because the
-    caller does not know a handoff happened. Between the two rules the
-    confirmation had no owner: the caller went from reciting a date of birth
-    straight to claim data, never hearing their name or that the check passed.
+    It lives here, on the first tool after verification, rather than on
+    `verify_identity` itself — because in squad mode the agent that verifies
+    hands the call on about a second later, and twice on live calls the
+    transfer severed the sentence mid-word ("You're all"). The agent reading
+    this one is always an agent that is staying.
 
-    So the duty is re-issued to whoever actually speaks, and only when the
-    handoff really did intervene — in single-assistant mode the agent that was
-    told is the agent that speaks, and this stays silent. The model is asked to
-    check the transcript first, because triage sometimes does get its sentence
-    out, and hearing it twice is its own kind of wrong.
+    One owner, unconditionally: when both `verify_identity` and this asked for
+    it, the caller heard their name twice. It fires once per call and then goes
+    quiet, and in single-assistant mode it is simply the same agent a moment
+    later, so nothing about that flow changes.
+
+    No quotation marks around the example. The previous version wrapped it in
+    them and the model read the closing quote out: "You're all verified.'"
     """
     if not (session.greeting_owed and session.customer):
         return ""
-    if session.verified_by and session.verified_by == session.current_assistant:
-        return ""
     session.greeting_owed = False
     return (
-        f"The caller was verified a moment ago and then handed to you, so they may never have "
-        f"been told. Look back over the conversation: if nobody has confirmed it since they gave "
-        f"their date of birth, open with one short sentence naming them — \"Thanks, "
-        f"{session.customer.greeting_name} — you're all verified\" — before anything below. If it "
-        f"was already said, do not say it again. "
+        f"First, before anything below, tell the caller the check passed — one short sentence "
+        f"naming them, such as: Thanks, {session.customer.greeting_name}, you're all verified. "
+        f"Nobody has told them yet; it is the only signal they get. Say it plainly, with no "
+        f"quotation marks and nothing added, then continue. "
     )
 
 
@@ -148,9 +146,17 @@ def get_document_instructions(session: CallSession, args: dict[str, Any]) -> dic
         "deadline": speakable(target.submission_deadline) if target else "",
         "channels": [{**c, "detail": speakable(c["detail"])} for c in SUBMISSION_CHANNELS],
         "accepted_formats": "PDF, JPG, PNG or HEIC, up to 25 megabytes per file",
-        "instruction": (
+        "instruction": greeting_note(session) + (
             "List the required documents first, then recommend the portal as the fastest option and "
             "offer email as the alternative. Give the deadline if there is one. "
+            # Only get_claim_status carried this, so a caller who went straight
+            # to documents heard the deadline as "the 20 ninth of October" and
+            # then "29 October" — the words rewritten as digits, which is the
+            # bug the spoken form exists to prevent.
+            "The deadline and the portal address are already written the way they are said. Read "
+            "them across exactly: say the twenty-ninth of October, never 29 October or October "
+            "29th; say the address with its forward slash. Do not turn any of it back into "
+            "figures or symbols. "
             # This used to end "Offer to text or email the upload link", and
             # nothing in this system can send anything. On a live call the
             # agent offered it unprompted, the caller said yes, and it had to

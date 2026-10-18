@@ -108,20 +108,21 @@ def verify_identity(session: CallSession, args: dict[str, Any]) -> dict[str, Any
             # said, which dropped the name and the confirmation entirely. The
             # greeting is not the alternative to continuing; it is the sentence
             # before it.
-            # Deliberately says nothing about transfers or handoffs. An earlier
-            # version said "before any other tool and before any handoff" — and
-            # the agent, handed the word at the exact moment it was choosing
-            # what to say, announced the transfer it is forbidden to mention:
-            # "You're all verified. Let me transfer you to a claims specialist."
-            # Naming a thing to rule it out still puts it in the room.
+            # This no longer asks for the confirmation to be spoken here, and
+            # that is the point. Twice on live calls the agent began it and was
+            # cut off mid-word by the squad transfer that follows a second
+            # later — "You're all" — leaving the next agent to say the whole
+            # thing again, so the caller heard their own name twice.
+            #
+            # The sentence now belongs to whichever tool runs next, which is
+            # always an agent that is staying on the call. See
+            # `claims.greeting_note`. In single-assistant mode that is the same
+            # agent a moment later, so nothing is lost.
             "instruction": (
-                f"Identity confirmed. Your next words are exactly this and nothing more: thank "
-                f"{session.customer.greeting_name} by name and say they are verified — \"Thanks, "
-                f"{session.customer.greeting_name} — you're all verified.\" Say it first, before "
-                f"anything else you do. It is the only signal the caller gets that the security "
-                f"check passed, and going straight on without it leaves them unsure whether it "
-                f"did. Then carry on with what they came for: their claim if they already said, "
-                f"otherwise ask. Add nothing else to that sentence."
+                "Identity confirmed. Do not announce it yet — not the name, not the word "
+                "verified, nothing. Go straight on to what they came for, and the tool you call "
+                "next will give you the exact sentence to open with. Saying it here risks being "
+                "cut off halfway through."
             ),
         }
 
