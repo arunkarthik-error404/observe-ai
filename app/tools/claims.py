@@ -111,8 +111,15 @@ def get_claim_status(session: CallSession, args: dict[str, Any]) -> dict[str, An
             "claim's status, then mention what the other one is in a single clause and let them "
             "ask. Do not recite the details of more than one claim unless they ask. "
             "Say a claim number only if they ask or if there is more than one claim. "
-            "Amounts and dates are already written the way they should be said — read them "
-            "exactly as given, do not reformat them back into figures. "
+            # Removing the figure form from the payload was not enough: the
+            # model rewrote the words back into digits. Proven rather than
+            # assumed — two calls with identical payload text produced "the
+            # twelfth of October" on one and "12 October" on the other, so the
+            # variation is the model's, not the transcript's.
+            "amount_spoken and every date here are already words, and words are what you say. "
+            "Do not convert them back into figures: say \"four thousand two hundred and fifty "
+            "dollars\", never \"4250 dollars\"; say \"the twelfth of October\", never \"12 "
+            "October\" or \"October 12th\". Read them across exactly as they are written here. "
             "If needs_documents is true, call get_document_instructions next. "
             "If the status is Denied, acknowledge that it is disappointing before explaining options."
         ),
@@ -143,7 +150,14 @@ def get_document_instructions(session: CallSession, args: dict[str, Any]) -> dic
         "accepted_formats": "PDF, JPG, PNG or HEIC, up to 25 megabytes per file",
         "instruction": (
             "List the required documents first, then recommend the portal as the fastest option and "
-            "offer email as the alternative. Give the deadline if there is one. Offer to text or "
-            "email the upload link. Do not read out all four channels unless they ask."
+            "offer email as the alternative. Give the deadline if there is one. "
+            # This used to end "Offer to text or email the upload link", and
+            # nothing in this system can send anything. On a live call the
+            # agent offered it unprompted, the caller said yes, and it had to
+            # answer "I can't send the upload link directly" — an offer made
+            # and withdrawn in two turns. Read the address out instead.
+            "You cannot send, text or email anything, so never offer to. Read the portal address "
+            "aloud and tell them it is also on their statement. "
+            "Do not read out all four channels unless they ask."
         ),
     }

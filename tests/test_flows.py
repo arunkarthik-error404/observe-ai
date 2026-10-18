@@ -1037,3 +1037,39 @@ def test_the_verification_instruction_never_mentions_a_handoff():
     for word in ("handoff", "hand off", "transfer", "specialist", "colleague"):
         assert word not in instruction, f"{word!r} must not be put in the model's head here"
     assert "Marcus" in verified["instruction"]
+
+
+def test_nothing_offers_to_send_the_caller_anything():
+    """The agent asked "would you like me to send you the upload link?", the
+    caller said yes, and it answered "I can't send the upload link directly".
+    There is no tool that sends anything, and three places used to instruct
+    exactly that offer."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-361-2234")
+    tool(call_id, "verify_identity", date_of_birth="1988-04-12")
+    docs = tool(call_id, "get_document_instructions")
+
+    instruction = docs["instruction"].lower()
+    assert "offer to text or email" not in instruction
+    assert "cannot send, text or email anything" in instruction
+
+    # And no prompt may reinstate it.
+    import pathlib
+    for name in ("squad_claims.md", "single_assistant.md", "_shared_rules.md"):
+        text = pathlib.Path("vapi/prompts", name).read_text(encoding="utf-8").lower()
+        assert "offer to text or email" not in text, name
+
+
+def test_the_claim_instruction_names_the_figure_forms_it_forbids():
+    """Dropping `amount` from the payload was not enough — the model wrote the
+    words back as digits, which two calls with identical payload text proved
+    by rendering one date each way."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-418-4492")
+    tool(call_id, "verify_identity", date_of_birth="1965-02-28")
+    instruction = tool(call_id, "get_claim_status")["instruction"]
+
+    assert "never \"4250 dollars\"" in instruction
+    assert "never \"12 October\"" in instruction
+    # The stale key it used to name is gone along with the field itself.
+    assert "never amount" not in instruction.lower()
