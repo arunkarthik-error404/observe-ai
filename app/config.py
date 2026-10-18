@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     vapi_assistant_id: str = ""
     vapi_squad_id: str = ""
 
+    # --- privacy ----------------------------------------------------------
+    # Phone numbers, names and dates of birth are masked in the log stream.
+    # Defaults on: a claims line handles regulated data, and logs outlive the
+    # call. Turn it off locally to debug a value you cannot otherwise see —
+    # never in an environment handling real customers.
+    redact_logs: bool = True
+
     # --- behaviour --------------------------------------------------------
     max_auth_attempts: int = 3
     session_ttl_seconds: int = 3600

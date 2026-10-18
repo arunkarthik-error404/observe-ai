@@ -149,6 +149,22 @@ def _handle_end_of_call(call_id: str, message: dict[str, Any]) -> Any:
         transcript=payloads.transcript_from(message),
     )
 
+    # What the caller actually experienced, turn by turn. Logged separately
+    # from the record because it is operational data, not claims data — and
+    # because a latency regression shows up here long before anyone complains
+    # that "the agent feels slow".
+    latency = payloads.latency_summary(message)
+    if latency:
+        if session is not None:
+            session.latency = latency
+        tool_ms = [round(e.duration_ms) for e in session.tool_events] if session else []
+        log.info("call_latency", extra={
+            "call_id": call_id,
+            **latency,
+            "our_tool_ms_total": sum(tool_ms),
+            "our_tool_ms_max": max(tool_ms) if tool_ms else 0,
+        })
+
     try:
         repository().write_interaction(record)
         log.info("interaction_logged", extra={"call_id": call_id, "sentiment": record.sentiment})

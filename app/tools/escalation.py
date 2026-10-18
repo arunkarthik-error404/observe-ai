@@ -7,8 +7,19 @@ from typing import Any
 from ..config import settings
 from ..models import utc_now_iso
 from ..notifications import notify_escalation
+from ..repositories import repository
 from ..session import CallSession
 from .common import EMERGENCY_SCRIPT, business_hours_now, log
+
+
+def _record_url(session: CallSession) -> str:
+    """Never let a broken link break an escalation."""
+    if not session.customer:
+        return ""
+    try:
+        return repository().record_url(session.customer)
+    except Exception:  # noqa: BLE001 - a dead CRM must not block the handoff
+        return ""
 
 
 def escalate_to_human(session: CallSession, args: dict[str, Any]) -> dict[str, Any]:
@@ -43,6 +54,10 @@ def escalate_to_human(session: CallSession, args: dict[str, Any]) -> dict[str, A
         "claims_discussed": session.claims_discussed,
         "auth_attempts": session.auth_attempts,
         "topics": session.intents,
+        # One click to the caller's record, rather than the receiving agent
+        # searching for them while the caller waits. Empty for a backend with
+        # no addressable records, and the message simply omits the button.
+        "record_url": _record_url(session),
     }
     log.info("escalation_ticket", extra={"call_id": session.call_id, "ticket": handoff_context})
 

@@ -55,6 +55,8 @@ class CallSession:
     emergency: bool = False
     tool_events: list[ToolEvent] = field(default_factory=list)
     assistant_path: list[str] = field(default_factory=list)
+    # Caller-perceived turn latency, filled in from the end-of-call report.
+    latency: dict[str, Any] = field(default_factory=dict)
 
     @property
     def authenticated(self) -> bool:
@@ -85,6 +87,7 @@ class CallSession:
             "escalation_reason": self.escalation_reason,
             "emergency": self.emergency,
             "assistant_path": self.assistant_path,
+            "latency": self.latency,
             "tool_events": [
                 {
                     "name": e.name,

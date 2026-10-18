@@ -34,8 +34,15 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure(level: int = logging.INFO) -> None:
+    from .config import settings
+    from .redaction import RedactingFilter
+
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
+    # On the handler, not on one logger: a library that logs a caller's number
+    # is exactly the case a per-logger filter would miss.
+    if settings().redact_logs:
+        handler.addFilter(RedactingFilter())
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level)

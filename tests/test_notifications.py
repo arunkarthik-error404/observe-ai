@@ -145,3 +145,43 @@ def test_a_slack_outage_cannot_break_the_call(monkeypatch):
 
 def test_health_reports_whether_slack_is_wired(slack):
     assert client.get("/health").json()["slack_notifications"] is True
+
+
+def _buttons(blocks: list[dict]) -> list[dict]:
+    return [e for b in blocks if b["type"] == "actions" for e in b["elements"]]
+
+
+def test_a_verified_caller_gets_a_link_to_their_record():
+    """The cheap half of a screen pop — the agent opens the record instead of
+    searching for the caller while they wait."""
+    message = notifications.build_message({
+        "ticket_id": "ESC-4821",
+        "customer_name": "Ana Duarte",
+        "identity_verified": True,
+        "record_url": "https://example.my.salesforce.com/lightning/r/Contact/003XX/view",
+    }, transfer="callback")
+
+    buttons = _buttons(message["blocks"])
+    assert len(buttons) == 1
+    assert buttons[0]["url"].endswith("/lightning/r/Contact/003XX/view")
+
+
+def test_an_unverified_caller_gets_no_record_link():
+    """Sending an agent straight to a record we have not proven belongs to the
+    person on the phone invites the mistake the auth gate exists to prevent."""
+    message = notifications.build_message({
+        "ticket_id": "ESC-4822",
+        "customer_name": "unverified",
+        "identity_verified": False,
+        "record_url": "https://example.my.salesforce.com/lightning/r/Contact/003XX/view",
+    }, transfer="callback")
+
+    assert _buttons(message["blocks"]) == []
+
+
+def test_a_backend_with_no_addressable_records_omits_the_button():
+    message = notifications.build_message(
+        {"ticket_id": "ESC-4823", "identity_verified": True, "record_url": ""},
+        transfer="live",
+    )
+    assert _buttons(message["blocks"]) == []

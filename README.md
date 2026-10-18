@@ -77,6 +77,15 @@ better data arrives and a redelivery is harmless by construction. How that
 upsert is achieved differs by backend, and the contrast is the interesting part
 — see Integrations below.
 
+**PII does not reach the log stream.** Logs are the one place data leaves this
+system without anyone deciding it should — shipped to a hosting provider,
+tailed in a terminal, pasted into a ticket, kept long after the call. Phone
+numbers, names and dates of birth are masked on the way out
+(`app/redaction.py`), by field name *and* by value, because a number in free
+text never passes through a field with a helpful name. Masks keep the last four
+digits and the email domain: a redaction that destroys all debuggability gets
+switched off the first time someone is paged at 3am.
+
 **The in-call write never blocks the caller.** A Sheets append measured ~1.4s
 live, and `log_interaction` fires while the caller waits to be told goodbye, so
 it is handed to a worker thread. Nothing the caller hears depends on it, the
@@ -154,6 +163,7 @@ app/
   session.py           per-call state: auth, attempt counts, tool timeline
   seed.py              the demo dataset, one persona per scenario
   notifications.py     Integration #3: escalation to Slack
+  redaction.py         PII masking for the log stream
   api/
     webhook.py         Vapi's one endpoint, routed by message type
     security.py        shared-secret and URL-token authentication
@@ -179,7 +189,7 @@ vapi/
   prompts/             shared rules + one prompt per agent
 web/                   debug console and browser dialler
 scripts/               provisioning, org setup, diagnostics, scenario replay
-tests/                 70 tests, no credentials required
+tests/                 87 tests, no credentials required
 .github/workflows/     CI: tests, lint, agent config, knowledge base, secrets
 ```
 
@@ -190,7 +200,7 @@ python -m venv venv && venv\Scripts\activate      # Windows
 pip install -r requirements.txt
 copy .env.example .env
 
-pytest                          # 70 tests, no credentials needed
+pytest                          # 87 tests, no credentials needed
 uvicorn app.main:app --reload   # http://127.0.0.1:8000
 ```
 
@@ -283,7 +293,17 @@ would not hang up because a "never hang up on someone" rule outranked the
 emergency script; `SF_LOGIN_URL` arriving from a hosting dashboard with a
 trailing newline.
 
-Latency and speech work lives in `vapi/agents.json`: `onNumberSeconds: 0.9`
+**Latency is measured, not guessed.** Every call logs `call_latency`: the gap
+between the caller finishing a sentence and the agent starting to speak,
+per turn, split by whether a tool ran in that gap. Across real calls the p50
+sits around 1.6–2.0s, and turns that hit Salesforce are *not* slower than turns
+that do not — tool round trips land at 250–560ms inside a gap that is mostly
+endpointing. So the integration is not the thing to optimise; the deliberate
+1.7s endpointing wait is, and that wait is buying accuracy that 1.3s lost.
+Knowing which of those two it is, before changing either, is the whole point of
+measuring.
+
+The rest of the speech work lives in `vapi/agents.json`: `onNumberSeconds: 0.9`
 stops endpointing from cutting a caller off mid-phone-number,
 `onNoPunctuationSeconds: 1.7` gives a thinking pause room to breathe (1.3 once
 read a mid-sentence pause as a complete answer and ended the call),
@@ -293,8 +313,14 @@ CRM round-trips.
 
 ## Known limits and what comes next
 
-- **Session state is in-process.** Fine for one instance; a second replica needs
-  Redis. The `SessionStore` interface is two methods wide for that reason.
+- **Session state is in-process.** Auth state lives in a dict keyed by call id,
+  which is correct for one instance and wrong for two: Vapi sends each tool call
+  as its own request, so a load balancer can route `verify_identity` to one
+  replica and `get_claim_status` to another, and the second one has never heard
+  of the caller. Redis is the fix, but the work is not only swapping the store —
+  tools mutate the session in place, which stops persisting anything once the
+  object is deserialized per request, and the `threading.Lock` stops meaning
+  anything once the race is between processes.
 - **DOB as a second factor is weak**, and the attempt limit is per call rather
   than per caller — redialling resets it. Production wants an OTP to the number
   on file, or ANI matching plus a knowledge factor, and rate limiting keyed to
@@ -302,15 +328,18 @@ CRM round-trips.
 - **Retrieval is lexical.** The right call for twelve entries; a real knowledge
   base wants embeddings, a reranker and chunk-level citations.
 - **No automated evals on the conversation itself.** The tests prove the server
-  behaves; nothing proves a prompt edit did not make the agent worse.
-  `scripts/simulate_call.py` is the skeleton of that harness.
-- **No PII redaction in logs yet.** Phone numbers reach the log stream; a claims
-  deployment needs field-level redaction and a retention policy before it touches
-  real customers.
+  behaves and `check_agent_config.py` proves the wiring holds, but nothing
+  proves a prompt edit did not make the agent *worse*. Doing it properly needs a
+  model in the loop — either Vapi's chat API, which text-drives the real
+  assistant but requires a funded org, or the prompts replayed against an LLM
+  directly. `scripts/simulate_call.py` is the skeleton either would hang off.
+- **Redaction narrows what is logged, not how long it is kept.** There is no
+  retention policy, and the hosting provider's log store is wherever it is.
+  Real claims data needs both.
 - **Recordings stay in Vapi's bucket.** The transcript is written to Salesforce,
   but the audio is behind authenticated URLs; production would point Vapi at an
   owned S3 bucket, which is also where the compliance conversation belongs.
-- **Next:** per-leg latency metrics (STT → tool → TTS) to find where time goes,
-  an eval suite of recorded audio fixtures run against prompt changes in CI,
-  Spanish, and a transfer that hands the human agent the warm-handoff context as
-  a screen pop rather than a Slack message.
+- **Next:** an eval suite run against prompt changes in CI, Spanish end to end
+  (prompts, voice, transcriber and knowledge base, not just the prompt), and a
+  real CTI screen pop — the Slack button is the cheap half, but it does not
+  follow the caller onto an agent's screen as the call arrives.

@@ -79,6 +79,22 @@ def build_message(context: dict[str, Any], transfer: str) -> dict[str, Any]:
             "text": {"type": "mrkdwn", "text": f"*What they said*\n>{context['notes']}"},
         })
 
+    # The cheap half of a screen pop: the agent opens the caller's record
+    # instead of searching for them while the caller waits. Only offered for a
+    # verified caller — sending someone straight to a record we have not proven
+    # belongs to the person on the phone invites exactly the mistake the
+    # authentication gate exists to prevent.
+    if context.get("record_url") and verified:
+        blocks.append({
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Open customer record"},
+                "url": context["record_url"],
+                "style": "primary",
+            }],
+        })
+
     topics = context.get("topics") or []
     attempts = context.get("auth_attempts", 0)
     footer = f"Ticket {context.get('ticket_id')} · {urgency} urgency"

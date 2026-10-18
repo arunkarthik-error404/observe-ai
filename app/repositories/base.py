@@ -30,5 +30,15 @@ class ClaimsRepository(ABC):
     def write_interaction(self, record: InteractionRecord) -> None:
         """Integration #2. Must be idempotent on record.call_id."""
 
+    def record_url(self, customer: Customer) -> str:
+        """A link a human can open to see this customer in the source system.
+
+        Optional: a backend with no addressable records returns "". This is the
+        cheap half of a screen pop — the agent taking the handoff gets the
+        caller's record one click away instead of searching for them while the
+        caller waits.
+        """
+        return ""
+
     def health(self) -> dict:
         return {"backend": type(self).__name__, "ok": True}

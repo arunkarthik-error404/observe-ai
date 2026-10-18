@@ -106,6 +106,78 @@ def transcript_from(message: dict[str, Any]) -> str:
     return "\n".join(turns)
 
 
+def response_latencies(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-turn latency as the caller experienced it.
+
+    The number that matters on a voice call is the gap between the caller
+    finishing a sentence and the agent starting to speak. Vapi's transcript
+    messages carry `time` and `endTime` in epoch milliseconds, so that gap is
+    `bot.time - user.endTime` — it spans endpointing, STT finalisation, the
+    model, any tool round trip, and TTS time-to-first-byte.
+
+    `tool` marks the turns where a tool ran in that gap, which is what makes
+    this actionable: our own tool timings are already measured server-side, so
+    a slow turn can be attributed to us or to the voice stack rather than
+    guessed at.
+    """
+    entries = message.get("artifact", {}).get("messages") or message.get("messages") or []
+    turns: list[dict[str, Any]] = []
+    pending_end: float | None = None
+    tool_between = False
+
+    for entry in entries:
+        role = entry.get("role")
+        if role == "user":
+            pending_end = _ms(entry.get("endTime"))
+            tool_between = False
+        elif role in {"tool_calls", "tool_call_result"}:
+            tool_between = True
+        elif role == "bot" and pending_end is not None:
+            started = _ms(entry.get("time"))
+            if started is not None and started > pending_end:
+                turns.append({
+                    "at_seconds": round(float(entry.get("secondsFromStart") or 0), 2),
+                    "latency_ms": round(started - pending_end),
+                    "tool": tool_between,
+                })
+            pending_end = None
+            tool_between = False
+    return turns
+
+
+def latency_summary(message: dict[str, Any]) -> dict[str, Any]:
+    """p50/p95 over a call. Small sample, so the percentiles are indicative —
+    the max is usually the one worth looking at."""
+    turns = response_latencies(message)
+    if not turns:
+        return {}
+    values = sorted(t["latency_ms"] for t in turns)
+    tool_turns = [t["latency_ms"] for t in turns if t["tool"]]
+    plain = [t["latency_ms"] for t in turns if not t["tool"]]
+    return {
+        "turns": len(values),
+        "p50_ms": _percentile(values, 0.50),
+        "p95_ms": _percentile(values, 0.95),
+        "max_ms": values[-1],
+        "with_tool_ms": _percentile(sorted(tool_turns), 0.50) if tool_turns else None,
+        "without_tool_ms": _percentile(sorted(plain), 0.50) if plain else None,
+    }
+
+
+def _percentile(sorted_values: list[int], fraction: float) -> int:
+    if not sorted_values:
+        return 0
+    index = min(len(sorted_values) - 1, int(round(fraction * (len(sorted_values) - 1))))
+    return sorted_values[index]
+
+
+def _ms(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def duration_from(message: dict[str, Any]) -> float | None:
     value = message.get("durationSeconds") or message.get("duration")
     try:

@@ -232,6 +232,19 @@ class SalesforceRepository(ClaimsRepository):
                 log.info("interaction_upsert_raced", extra={"call_id": record.call_id})
                 time.sleep(0.4)
 
+    def record_url(self, customer: Customer) -> str:
+        """Lightning deep link to the Contact. Opens on the activity timeline,
+        where the Task this call writes will appear."""
+        if not customer or not customer.source_id:
+            return ""
+        try:
+            _, instance = tokens.credentials()
+        except SalesforceAuthError:
+            return ""
+        if not instance:
+            return ""
+        return f"{instance}/lightning/r/Contact/{customer.source_id}/view"
+
     # --- diagnostics ------------------------------------------------------
     def health(self) -> dict:
         try:
