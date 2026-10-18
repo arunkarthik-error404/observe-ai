@@ -189,7 +189,7 @@ vapi/
   prompts/             shared rules + one prompt per agent
 web/                   debug console and browser dialler
 scripts/               provisioning, org setup, diagnostics, scenario replay
-tests/                 87 tests, no credentials required
+tests/                 110 tests, no credentials required
 .github/workflows/     CI: tests, lint, agent config, knowledge base, secrets
 ```
 
@@ -200,7 +200,7 @@ python -m venv venv && venv\Scripts\activate      # Windows
 pip install -r requirements.txt
 copy .env.example .env
 
-pytest                          # 87 tests, no credentials needed
+pytest                          # 110 tests, no credentials needed
 uvicorn app.main:app --reload   # http://127.0.0.1:8000
 ```
 

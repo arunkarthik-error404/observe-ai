@@ -1,4 +1,4 @@
-"""Demo dataset: one persona per interview scenario.
+"""Demo dataset: one persona per scenario.
 
 This is the single source of truth. `scripts/seed_sheet.py` pushes it to Google
 Sheets (or renders CSVs), and `MemoryRepository` serves it directly so the agent
@@ -16,7 +16,7 @@ pairs like 03/04.
 
 from __future__ import annotations
 
-# Scenario map (keep this handy during the demo):
+# Scenario map:
 #   555-234-1187  Daniel Okafor   -> happy path, claim in review
 #   555-361-2234  Priya Raman     -> claim needs documents
 #   555-418-4492  Marcus Webb     -> authentication failure (give a wrong DOB)
