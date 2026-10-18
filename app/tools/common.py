@@ -27,7 +27,7 @@ from functools import wraps
 from typing import Any
 
 from ..config import settings
-from ..models import Claim, spoken_amount
+from ..models import Claim, speakable, spoken_amount
 from ..session import CallSession
 
 log = logging.getLogger("claims.tools")
@@ -108,18 +108,20 @@ def claim_brief(claim: Claim) -> dict[str, Any]:
         "claim_id": claim.claim_id,
         "claim_type": claim.claim_type,
         "status": claim.status,
-        "status_detail": claim.status_detail,
-        "amount": claim.amount,
-        # The same number twice, because the two have different jobs: `amount`
-        # is what a human reads in a log or a CRM record, `amount_spoken` is
-        # what the caller hears. See `spoken_amount`.
+        "status_detail": speakable(claim.status_detail),
+        # Only the spoken form. This used to carry `amount` as well — "$4,250.00"
+        # for a screen, "four thousand two hundred and fifty dollars" for the
+        # caller — with an instruction to read the second and never the first.
+        # On a live call the model read the first anyway, twice, and the caller
+        # heard "4250 dollars" and had to ask again. An instruction not to say
+        # something is weaker than not being given it.
         "amount_spoken": spoken_amount(claim.amount),
         "adjuster": claim.adjuster_name,
         "needs_documents": claim.needs_documents,
         "required_documents": claim.required_documents,
-        "submission_deadline": claim.submission_deadline,
-        "last_updated": claim.last_updated,
-        "next_step": claim.next_step,
+        "submission_deadline": speakable(claim.submission_deadline),
+        "last_updated": speakable(claim.last_updated),
+        "next_step": speakable(claim.next_step),
     }
 
 

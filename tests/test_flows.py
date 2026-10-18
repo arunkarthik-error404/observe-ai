@@ -96,7 +96,7 @@ def test_documents_required_branch():
 
     docs = tool(call_id, "get_document_instructions")
     assert "plumber" in docs["required_documents"]
-    assert docs["deadline"] == "2026-10-29"
+    assert docs["deadline"] == "the twenty-ninth of October"  # spoken, not ISO
     assert docs["channels"][0]["channel"] == "portal"
 
 
@@ -191,17 +191,24 @@ def test_money_is_rendered_for_a_voice_not_a_screen(formatted, spoken):
     assert spoken_amount(formatted) == spoken
 
 
-def test_an_amount_is_offered_in_words_for_the_voice_to_read():
-    """TTS read "$310.00" aloud as "three ten dollars" on a live call."""
+def test_the_figure_form_of_an_amount_is_not_offered_at_all():
+    """TTS read "$310.00" aloud as "three ten dollars" on a live call, so the
+    brief carried both forms with an instruction to read the spoken one. On a
+    later call the model read "$4,250.00" anyway and the caller heard "4250
+    dollars", then had to ask again. Now there is only one form to read."""
     call_id = new_call()
     tool(call_id, "lookup_customer", phone_number="555-418-4492")
     tool(call_id, "verify_identity", date_of_birth="1965-02-28")
     status = tool(call_id, "get_claim_status")
     claim = status["primary_claim"]
 
-    assert claim["amount"] == "$4,250.00"                       # for a screen
+    assert "amount" not in claim, "the figures must not be reachable"
     assert claim["amount_spoken"] == "four thousand two hundred and fifty dollars"
-    assert "amount_spoken, never amount" in status["instruction"]
+    assert "$" not in str(status), "no figure form anywhere in the payload"
+    # Dates in the narrative fields are spoken too — "October 12th" was read
+    # out as "October 12" on the same call.
+    assert claim["next_step"].startswith("Payment was issued the twelfth of October")
+    assert claim["status_detail"] == "Approved in full on the tenth of October."
 
 
 def test_a_second_claim_is_mentioned_not_recited():
@@ -993,3 +1000,40 @@ def test_document_channels_are_spoken_not_printed():
     assert "claims at observeinsurance dot com" in details
     assert "9 1 6, 5 5 5, 0 1 8 8" in details
     assert "megabytes" in docs["accepted_formats"]
+
+
+@pytest.mark.parametrize(
+    "written,spoken",
+    [
+        ("2026-10-29", "the twenty-ninth of October"),
+        ("Payment was issued October 12th.", "Payment was issued the twelfth of October."),
+        ("Approved on October 10th.", "Approved on the tenth of October."),
+        ("Reimbursed on September 28th.", "Reimbursed on the twenty-eighth of September."),
+        ("the inspection is on October 1st", "the inspection is on the first of October"),
+        # Not a date: a year must not become a day.
+        ("renewed in October 2026", "renewed in October 2026"),
+        ("", ""),
+    ],
+)
+def test_dates_are_rendered_for_a_voice_not_a_screen(written, spoken):
+    """TTS read "October 12th" as "October 12", and an earlier bug turned
+    "October 29th" into "October 20 ninth"."""
+    from app.models import speakable
+
+    assert speakable(written) == spoken
+
+
+def test_the_verification_instruction_never_mentions_a_handoff():
+    """It used to say "before any other tool and before any handoff", and the
+    agent announced the transfer it is forbidden to mention: "You're all
+    verified. Let me transfer you to a claims specialist." Naming a thing to
+    rule it out still puts it in the room."""
+    call_id = new_call()
+    tool_as(call_id, "observe-triage", "lookup_customer", phone_number="555-418-4492")
+    verified = tool_as(call_id, "observe-triage", "verify_identity",
+                       date_of_birth="1965-02-28")
+    instruction = verified["instruction"].lower()
+
+    for word in ("handoff", "hand off", "transfer", "specialist", "colleague"):
+        assert word not in instruction, f"{word!r} must not be put in the model's head here"
+    assert "Marcus" in verified["instruction"]

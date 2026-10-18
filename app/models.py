@@ -93,6 +93,67 @@ def spoken_amount(raw: str | None) -> str:
     return " and ".join(parts)
 
 
+# --- rendering written values for a voice ---------------------------------
+# Everything below exists because the same string is correct on a screen and
+# wrong out loud. `spoken_amount` above is the first of these; these are the
+# rest. Each one is a transform rather than a second hand-written copy of the
+# data, because two copies of a value are one edit away from disagreeing.
+
+_DAY_ORDINALS = (
+    "", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth",
+    "ninth", "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth",
+    "sixteenth", "seventeenth", "eighteenth", "nineteenth", "twentieth", "twenty-first",
+    "twenty-second", "twenty-third", "twenty-fourth", "twenty-fifth", "twenty-sixth",
+    "twenty-seventh", "twenty-eighth", "twenty-ninth", "thirtieth", "thirty-first",
+)
+_MONTHS = ("", "January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
+
+# "October 12th" is read aloud as "October 12" or, worse, "October 20 ninth".
+# The shared prompt rule asks for "the twelfth of October" and the model
+# usually complies — but the claim data says "October 12th", and on a live
+# call it read the screen form straight out.
+_MONTH_DAY = re.compile(
+    r"\b(" + "|".join(_MONTHS[1:]) + r")\s+(\d{1,2})(?:st|nd|rd|th)?\b", re.IGNORECASE)
+_ISO_DATE = re.compile(r"\b\d{4}-(\d{2})-(\d{2})\b")
+
+# A live call read `claims@observeinsurance.com` as "claims observe insurance
+# dot com" — the `@` simply vanished, leaving the caller an address that does
+# not exist — and dropped a fax number entirely mid-sentence.
+_EMAIL = re.compile(r"\b([\w.+-]+)@([\w-]+(?:\.[\w-]+)+)\b")
+_URL = re.compile(r"\b([\w-]+(?:\.[\w-]+)+)/(\S+)")
+_PHONE = re.compile(r"\b(\d{3})-(\d{3})-(\d{4})\b")
+_DOMAIN = re.compile(r"\b([\w-]+)\.(com|org|net)\b")
+
+
+def _spoken_day(month: int, day: int) -> str:
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return ""
+    return f"the {_DAY_ORDINALS[day]} of {_MONTHS[month]}"
+
+
+def speakable(text: str) -> str:
+    """Rewrite a written string into something a voice can say correctly.
+
+    Covers dates, emails, URLs and phone numbers. The year is dropped from an
+    ISO date on purpose: these are deadlines and recent events, and nobody
+    says "the twenty-ninth of October, two thousand and twenty-six" on a
+    phone call.
+    """
+    if not text:
+        return ""
+    text = _ISO_DATE.sub(
+        lambda m: _spoken_day(int(m.group(1)), int(m.group(2))) or m.group(0), text)
+    text = _MONTH_DAY.sub(
+        lambda m: _spoken_day(_MONTHS.index(m.group(1).capitalize()), int(m.group(2)))
+        or m.group(0), text)
+    text = _PHONE.sub(lambda m: ", ".join(" ".join(g) for g in m.groups()), text)
+    text = _EMAIL.sub(lambda m: f"{m.group(1)} at {m.group(2).replace('.', ' dot ')}", text)
+    text = _URL.sub(lambda m: f"{m.group(1).replace('.', ' dot ')} slash {m.group(2)}", text)
+    text = _DOMAIN.sub(lambda m: f"{m.group(1)} dot {m.group(2)}", text)
+    return " ".join(text.split())
+
+
 def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 

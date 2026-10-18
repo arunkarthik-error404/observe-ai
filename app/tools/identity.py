@@ -108,14 +108,20 @@ def verify_identity(session: CallSession, args: dict[str, Any]) -> dict[str, Any
             # said, which dropped the name and the confirmation entirely. The
             # greeting is not the alternative to continuing; it is the sentence
             # before it.
+            # Deliberately says nothing about transfers or handoffs. An earlier
+            # version said "before any other tool and before any handoff" — and
+            # the agent, handed the word at the exact moment it was choosing
+            # what to say, announced the transfer it is forbidden to mention:
+            # "You're all verified. Let me transfer you to a claims specialist."
+            # Naming a thing to rule it out still puts it in the room.
             "instruction": (
-                f"Identity confirmed. Say this out loud before anything else — before any other "
-                f"tool and before any handoff: thank {session.customer.greeting_name} by name and "
-                f"tell them they are verified. One short sentence, such as \"Thanks, "
-                f"{session.customer.greeting_name} — you're all verified.\" This is the only signal "
-                f"the caller gets that the security check passed, and going straight into their "
-                f"claim leaves them wondering whether it did. Only once you have said it, continue: "
-                f"go to their claim if they already told you what they need, otherwise ask."
+                f"Identity confirmed. Your next words are exactly this and nothing more: thank "
+                f"{session.customer.greeting_name} by name and say they are verified — \"Thanks, "
+                f"{session.customer.greeting_name} — you're all verified.\" Say it first, before "
+                f"anything else you do. It is the only signal the caller gets that the security "
+                f"check passed, and going straight on without it leaves them unsure whether it "
+                f"did. Then carry on with what they came for: their claim if they already said, "
+                f"otherwise ask. Add nothing else to that sentence."
             ),
         }
 

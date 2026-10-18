@@ -8,8 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..knowledge import speakable
-from ..models import normalize_claim_id
+from ..models import normalize_claim_id, speakable
 from ..repositories import RepositoryError, repository
 from ..session import CallSession
 from .common import claim_brief, log, requires_auth, unavailable
@@ -112,7 +111,8 @@ def get_claim_status(session: CallSession, args: dict[str, Any]) -> dict[str, An
             "claim's status, then mention what the other one is in a single clause and let them "
             "ask. Do not recite the details of more than one claim unless they ask. "
             "Say a claim number only if they ask or if there is more than one claim. "
-            "When you say a money amount out loud, read amount_spoken, never amount. "
+            "Amounts and dates are already written the way they should be said — read them "
+            "exactly as given, do not reformat them back into figures. "
             "If needs_documents is true, call get_document_instructions next. "
             "If the status is Denied, acknowledge that it is disappointing before explaining options."
         ),
@@ -138,7 +138,7 @@ def get_document_instructions(session: CallSession, args: dict[str, Any]) -> dic
         "ok": True,
         "claim_id": target.claim_id if target else "",
         "required_documents": target.required_documents if target else "",
-        "deadline": target.submission_deadline if target else "",
+        "deadline": speakable(target.submission_deadline) if target else "",
         "channels": [{**c, "detail": speakable(c["detail"])} for c in SUBMISSION_CHANNELS],
         "accepted_formats": "PDF, JPG, PNG or HEIC, up to 25 megabytes per file",
         "instruction": (

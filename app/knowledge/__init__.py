@@ -21,38 +21,14 @@ from pathlib import Path
 
 from rapidfuzz import fuzz
 
+from ..models import speakable
+
 KB_PATH = Path(__file__).parent / "faq.md"
 MIN_SCORE = 52.0  # tuned against the recall/leak fixtures in scripts/check_kb.py
 
-# Written forms that a text-to-speech voice mangles or silently drops. Same
-# problem `spoken_amount` solves for money and the phonetic emergency script
-# solves for "9-1-1": the entry is correct on a screen and wrong out loud.
-#
-# A live call read `claims@observeinsurance.com` as "claims observe insurance
-# dot com" — the `@` simply vanished, leaving the caller an address that does
-# not exist — and dropped the fax number entirely mid-sentence.
-_EMAIL = re.compile(r"\b([\w.+-]+)@([\w-]+(?:\.[\w-]+)+)\b")
-_URL = re.compile(r"\b([\w-]+(?:\.[\w-]+)+)/(\S+)")
-_PHONE = re.compile(r"\b(\d{3})-(\d{3})-(\d{4})\b")
-_DOMAIN = re.compile(r"\b([\w-]+)\.(com|org|net)\b")
-
-
-def speakable(text: str) -> str:
-    """Rewrite a knowledge-base answer into something a voice can say.
-
-    Deliberately a transform rather than a second copy of each answer in the
-    file. A hand-written spoken variant is one edit away from disagreeing with
-    the written one, and a knowledge base whose two halves disagree is worse
-    than one that is awkward in places.
-    """
-    text = _PHONE.sub(
-        lambda m: ", ".join(" ".join(group) for group in m.groups()), text)
-    text = _EMAIL.sub(
-        lambda m: f"{m.group(1)} at {m.group(2).replace('.', ' dot ')}", text)
-    text = _URL.sub(
-        lambda m: f"{m.group(1).replace('.', ' dot ')} slash {m.group(2)}", text)
-    text = _DOMAIN.sub(lambda m: f"{m.group(1)} dot {m.group(2)}", text)
-    return " ".join(text.split())
+# The written-to-spoken transform lives in `models` alongside `spoken_amount`,
+# because the knowledge base is not the only place a screen-shaped string
+# reaches the voice — the claim record and the document channels do it too.
 
 
 @dataclass
