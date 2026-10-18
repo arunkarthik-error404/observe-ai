@@ -6,12 +6,17 @@ Sheet (on the `Interactions` tab) and `/debug`.
 ## Before the call
 
 ```bash
-curl https://<service>.onrender.com/health      # wakes the free-tier dyno
-python scripts/seed_sheet.py                    # clean data, clean log
+curl https://observe-claims-agent.onrender.com/health   # wakes the free instance
 ```
 
-Check `health` reports `"backend":"sheets"` and `data_layer.ok: true`. Open
-`/debug` and the sheet. Have the scenario numbers on a sticky note:
+**Do this five minutes early, not one.** The free instance sleeps after 15
+minutes idle and takes about a minute to wake; a voice call will not wait that
+long, so a cold first call is dead air. Once it is awake the interview keeps it
+awake.
+
+Check `health` reports `"backend":"salesforce"` and `data_layer.ok: true`. Open
+`/debug` and the Salesforce Contact list. Have the scenario numbers on a sticky
+note:
 
 Set `BUSINESS_HOURS_MODE=open` if you want escalation to show a live transfer
 rather than the after-hours callback — Pacific office hours fall overnight in
@@ -19,7 +24,15 @@ IST, so `auto` will take the callback branch. Flip it to `closed` to show the
 other half.
 
 To warm the console (and smoke-test a fresh deploy) without talking:
-`python scripts/simulate_call.py --base https://<service>.onrender.com --scenario all`
+`python scripts/simulate_call.py --base https://observe-claims-agent.onrender.com --scenario all`
+
+It cleans up after itself only in the sense that the records it writes are
+tagged `sim_*` — delete those before the demo if you want a clean activity
+timeline.
+
+One ordering trap: `provision_vapi.py` attaches the phone number to whatever
+mode it just provisioned, so running `--mode single` after `--mode squad`
+silently points the number at the single assistant. Provision the squad **last**.
 
 | Number | Who | Scenario |
 |---|---|---|

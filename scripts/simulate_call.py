@@ -11,12 +11,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 Step = tuple[str, dict[str, Any]]  # optional 3rd element: the squad member's name
 
@@ -129,7 +134,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="http://127.0.0.1:8000")
     parser.add_argument("--scenario", default="all", choices=["all", *SCENARIOS])
-    parser.add_argument("--secret", default="", help="x-vapi-secret, if the target enforces one")
+    # A deployed target enforces the shared secret, a local one usually does
+    # not. Defaulting to the configured secret means the same command works
+    # against both, instead of a bare 401 the first time you point it at prod.
+    parser.add_argument("--secret", default=os.getenv("VAPI_SECRET", ""),
+                        help="x-vapi-secret (defaults to VAPI_SECRET from .env)")
     parser.add_argument("-v", "--verbose", action="store_true", help="print full tool results")
     args = parser.parse_args()
 
