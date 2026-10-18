@@ -1,0 +1,272 @@
+{
+  "_comment": [
+    "Version-controlled agent configuration. scripts/provision_vapi.py renders this",
+    "into Vapi assistants/squads via the API, so the agent is reproducible instead of",
+    "clicked together in a dashboard. $SERVER_URL and $VAPI_SECRET are injected at",
+    "provision time and never stored here."
+  ],
+
+  "defaults": {
+    "model": {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "temperature": 0.3,
+      "maxTokens": 300
+    },
+    "_voice_comment": "Callers reach this line after an accident or a denial, so warmth beats brightness. Leah = warm/gentle; Clara (professional), Elliot (calm) and Kai (helpful) are the other sensible swaps. version 2 is the current Vapi voice model — v1 ids like Paige are legacy and rejected on new assistants.",
+    "voice": {
+      "provider": "vapi",
+      "voiceId": "Leah",
+      "version": 2
+    },
+    "transcriber": {
+      "provider": "deepgram",
+      "model": "nova-3",
+      "language": "en",
+      "numerals": true
+    },
+    "_endpointing_comment": "onNoPunctuationSeconds was 1.3 and cut a caller off mid-sentence when they paused to think ('pretty much nothing, I just want...'), which the model then read as a complete 'no' and ended the call. 1.7 gives a thinking pause room to breathe; onNumberSeconds stays separate because digits need even longer gaps.",
+    "startSpeakingPlan": {
+      "waitSeconds": 0.5,
+      "transcriptionEndpointingPlan": {
+        "onPunctuationSeconds": 0.1,
+        "onNoPunctuationSeconds": 1.7,
+        "onNumberSeconds": 0.9
+      }
+    },
+    "stopSpeakingPlan": {
+      "numWords": 2,
+      "voiceSeconds": 0.2,
+      "backoffSeconds": 1.0
+    },
+    "messagePlan": {
+      "idleMessages": ["Are you still there?", "I'm still here whenever you're ready."],
+      "idleTimeoutSeconds": 15,
+      "idleMessageMaxSpokenCount": 2
+    },
+    "silenceTimeoutSeconds": 30,
+    "maxDurationSeconds": 600,
+    "backgroundSound": "off",
+    "recordingEnabled": true,
+    "endCallFunctionEnabled": true,
+    "endCallMessage": "Thanks for calling Observe Insurance. Take care.",
+    "serverMessages": ["tool-calls", "end-of-call-report", "status-update"],
+    "analysisPlan": {
+      "summaryPrompt": "In two or three sentences, summarise this claims support call for the agent who may handle the next one. State who called, whether identity was verified, what they asked about, what they were told, and what happens next. Use plain past tense. Do not add anything that was not said.",
+      "structuredDataPrompt": "Extract the post-call record for this claims support call. Base sentiment on the caller's tone, not on how helpful the assistant was.",
+      "structuredDataSchema": {
+        "type": "object",
+        "properties": {
+          "caller_name": {
+            "type": "string",
+            "description": "Caller's full name if identity was verified, otherwise 'Unverified caller'."
+          },
+          "sentiment": {
+            "type": "string",
+            "enum": ["positive", "neutral", "negative", "frustrated"],
+            "description": "The caller's overall sentiment."
+          },
+          "intent": {
+            "type": "string",
+            "description": "Primary reason for the call, e.g. claim_status, document_submission, faq, escalation."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "How the call resolved, e.g. status_provided, documents_explained, escalated_to_agent, authentication_failed, customer_not_found."
+          },
+          "claim_id": { "type": "string", "description": "Claim number discussed, if any." },
+          "escalated": { "type": "boolean", "description": "True if the call was handed to a human or a callback was promised." }
+        },
+        "required": ["caller_name", "sentiment", "intent", "outcome"]
+      },
+      "successEvaluationPrompt": "Did the assistant verify identity before revealing any claim detail, answer the caller's actual question using only retrieved data, and either resolve the request or hand it off cleanly? Answer true or false.",
+      "successEvaluationRubric": "PassFail"
+    }
+  },
+
+  "tools": {
+    "_request_start_comment": "Only on tools that actually take time (a Sheets or Salesforce round trip is 300-900ms). verify_identity answers in about 2ms, and its filler phrase collided with the model's own — the caller heard 'One moment. Please. One moment while I check that.' Filler for a tool that is already instant is worse than silence.",
+    "lookup_customer": {
+      "description": "Look up whether an Observe Insurance account exists for a phone number. Call this first for anything account-specific. Returns only whether an account exists - it never returns the customer's name.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "phone_number": {
+            "type": "string",
+            "description": "The phone number the caller gave, digits only if possible, e.g. 5552341187."
+          }
+        },
+        "required": ["phone_number"]
+      },
+      "request_start": "Let me look that up for you."
+    },
+    "verify_identity": {
+      "description": "Confirm the caller's identity using the date of birth on the policy. Must succeed before any claim information can be retrieved.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "date_of_birth": {
+            "type": "string",
+            "description": "Date of birth as the caller said it, including the year. Any common format is accepted."
+          }
+        },
+        "required": ["date_of_birth"]
+      }
+    },
+    "get_claim_status": {
+      "description": "Retrieve the caller's claims and their current status. Requires verified identity.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "claim_id": {
+            "type": "string",
+            "description": "Optional claim number if the caller named one, e.g. CLM-48201."
+          }
+        }
+      },
+      "request_start": "Let me pull up your claim."
+    },
+    "get_document_instructions": {
+      "description": "Get the documents a claim still needs, the ways to submit them, and the deadline. Requires verified identity.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "claim_id": { "type": "string", "description": "Optional claim number." }
+        }
+      }
+    },
+    "search_knowledge_base": {
+      "description": "Answer a general question about Observe Insurance: office hours, mailing address, how to start a new claim, the claims process, document submission, payment timing, appeals, deductibles, rental cover, privacy. Use this instead of answering from memory. Does not require authentication.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The caller's question, in their own words."
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    "escalate_to_human": {
+      "description": "Open a handoff ticket and get transfer instructions when the caller needs a human, verification failed, the caller is distressed, or a system is unavailable.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Short reason code, e.g. caller_request, authentication_failed, customer_not_found, unsupported_question, system_unavailable, distressed_caller."
+          },
+          "urgency": { "type": "string", "enum": ["low", "normal", "high"] },
+          "notes": {
+            "type": "string",
+            "description": "One sentence of context for the human agent picking this up."
+          }
+        },
+        "required": ["reason"]
+      },
+      "request_start": "Let me get someone for you."
+    },
+    "report_emergency": {
+      "description": "Call immediately if the caller describes a life-threatening or in-progress emergency: fire, gas leak, injuries, chest pain, someone not breathing, self-harm, or an accident happening right now.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "What the caller said is happening."
+          }
+        },
+        "required": ["description"]
+      }
+    },
+    "log_interaction": {
+      "description": "Write the post-call interaction record. Call this once, just before ending the call.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "Two or three sentences: who called, what they wanted, what they were told, what happens next."
+          },
+          "sentiment": {
+            "type": "string",
+            "enum": ["positive", "neutral", "negative", "frustrated"],
+            "description": "The caller's sentiment, based on their tone."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Short outcome phrase, e.g. status_provided, escalated_to_agent, authentication_failed."
+          },
+          "caller_name": {
+            "type": "string",
+            "description": "Only if identity was never verified but the caller gave a name."
+          }
+        },
+        "required": ["summary", "sentiment"]
+      }
+    }
+  },
+
+  "assistants": {
+    "observe-claims-agent": {
+      "mode": "single",
+      "prompt": "prompts/single_assistant.md",
+      "firstMessage": "Thanks for calling Observe Insurance claims support, this is Aria. How can I help you today?",
+      "tools": [
+        "lookup_customer",
+        "verify_identity",
+        "get_claim_status",
+        "get_document_instructions",
+        "search_knowledge_base",
+        "escalate_to_human",
+        "report_emergency",
+        "log_interaction"
+      ]
+    },
+
+    "observe-triage": {
+      "mode": "squad",
+      "prompt": "prompts/squad_triage.md",
+      "firstMessage": "Thanks for calling Observe Insurance claims support, this is Aria. How can I help you today?",
+      "_tools_comment": "No escalate_to_human here on purpose. On the first live squad call the specialist both opened the ticket AND transferred, so the caller heard the handoff announced twice. In squad mode only the escalation agent owns escalation; everyone else just transfers to it.",
+      "tools": ["lookup_customer", "verify_identity", "search_knowledge_base", "report_emergency"],
+      "destinations": [
+        {
+          "assistant": "observe-claims-specialist",
+          "message": "",
+          "description": "Transfer here once verify_identity has returned verified true and the caller has a claim question, a document question, or any account-specific request."
+        },
+        {
+          "assistant": "observe-escalation",
+          "message": "",
+          "description": "Transfer here when the caller asks for a human, when verification has failed the maximum number of attempts, when no account could be found and the caller wants a person, or when the caller is distressed."
+        }
+      ]
+    },
+    "observe-claims-specialist": {
+      "mode": "squad",
+      "prompt": "prompts/squad_claims.md",
+      "tools": ["get_claim_status", "get_document_instructions", "search_knowledge_base", "report_emergency", "log_interaction"],
+      "destinations": [
+        {
+          "assistant": "observe-escalation",
+          "message": "",
+          "description": "Transfer here when the caller asks for a human, disputes a decision and wants to appeal with an agent, is distressed, or asks something outside claims support."
+        }
+      ]
+    },
+    "observe-escalation": {
+      "mode": "squad",
+      "prompt": "prompts/squad_escalation.md",
+      "_tools_comment": "report_emergency is on every agent without exception. A caller can declare a crisis at any point in the call, including while being handed to a human, and an agent that cannot route it has to improvise.",
+      "tools": ["escalate_to_human", "log_interaction", "search_knowledge_base", "report_emergency"]
+    }
+  },
+
+  "squad": {
+    "name": "observe-claims-squad",
+    "entry": "observe-triage",
+    "members": ["observe-triage", "observe-claims-specialist", "observe-escalation"]
+  }
+}

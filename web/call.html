@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Observe Insurance — Claims Line</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1e222b; --line: #2a2f3a;
+    --text: #e6e9ef; --muted: #98a2b3; --accent: #6ea8fe;
+    --ok: #3ddc97; --warn: #f5b84b; --bad: #ff6b6b;
+    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh;
+         font: 15px/1.55 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+         display: flex; justify-content: center; padding: 28px 16px; }
+  .wrap { width: 100%; max-width: 680px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+          padding: 18px; margin-bottom: 14px; }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 560px) { .modes { grid-template-columns: 1fr; } }
+  .mode { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+          padding: 14px; }
+  .mode h2 { font-size: 14px; margin: 0 0 4px; }
+  .mode p { color: var(--muted); font-size: 12.5px; margin: 0 0 12px; min-height: 34px; }
+  button { width: 100%; padding: 11px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--accent); color: #0b1020; font-weight: 650; font-size: 14px;
+           cursor: pointer; font-family: inherit; }
+  button.ghost { background: transparent; color: var(--text); }
+  button.danger { background: var(--bad); color: #1a0c0c; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { display: flex; align-items: center; gap: 10px; font-family: var(--mono);
+            font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 4px rgba(61,220,151,.15); }
+  .dot.connecting { background: var(--warn); }
+  .dot.error { background: var(--bad); }
+  .row { display: flex; gap: 10px; margin-top: 12px; }
+  #transcript { max-height: 320px; overflow-y: auto; }
+  .line { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .line:last-child { border-bottom: 0; }
+  .who { font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+         letter-spacing: .5px; color: var(--muted); margin-right: 8px; }
+  .line.agent .who { color: var(--accent); }
+  .line.caller .who { color: var(--ok); }
+  .hint { color: var(--muted); font-size: 12.5px; }
+  .hint code { font-family: var(--mono); color: var(--text); background: var(--panel-2);
+               padding: 1px 5px; border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td { padding: 5px 0; border-bottom: 1px solid var(--line); }
+  td:first-child { font-family: var(--mono); color: var(--muted); white-space: nowrap;
+                   padding-right: 14px; }
+  tr:last-child td { border-bottom: 0; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Observe Insurance — Claims Line</h1>
+  <div class="sub">Browser dialler for the claims assistant. Mic access required.</div>
+
+  <div class="card">
+    <div class="status"><span class="dot" id="dot"></span><span id="status">idle</span></div>
+    <div class="row" id="hangupRow" style="display:none">
+      <button class="danger" id="hangup">Hang up</button>
+      <button class="ghost" id="mute">Mute</button>
+    </div>
+  </div>
+
+  <div class="card modes" id="modes">
+    <div class="mode">
+      <h2>Single agent</h2>
+      <p>One assistant handles greeting, identity, claims, FAQs and escalation.</p>
+      <button data-mode="assistant">Call single agent</button>
+    </div>
+    <div class="mode">
+      <h2>Three-agent squad</h2>
+      <p>Triage authenticates, then hands off to a claims specialist, then to escalation.</p>
+      <button data-mode="squad">Call the squad</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="status" style="margin-bottom:10px"><strong style="font-size:13px">Live transcript</strong></div>
+    <div id="transcript"><div class="hint">Nothing yet. Start a call above.</div></div>
+  </div>
+
+  <div class="card">
+    <table id="numbers">
+      <tr><td>555 234 1187</td><td>Daniel Okafor · 3 Nov 1979 — claim in review</td></tr>
+      <tr><td>555 361 2234</td><td>Priya Raman · 12 Apr 1988 — documents required</td></tr>
+      <tr><td>555 418 4492</td><td>Marcus Webb · 28 Feb 1965 — use a wrong DOB</td></tr>
+      <tr><td>555 572 5513</td><td>Lena Fischer · 21 Jul 1993 — no claims on file</td></tr>
+      <tr><td>555 693 6678</td><td>Ana Duarte · 9 Jan 1982 — denied claim</td></tr>
+      <tr><td>555 999 8888</td><td>nobody — customer not found</td></tr>
+    </table>
+    <div class="hint" style="margin-top:12px">
+      Watch the call live at <a href="debug" target="_blank">/debug</a>.
+    </div>
+  </div>
+</div>
+
+<script type="module">
+// Pinned, not @latest: a demo should not be able to break because a vendor
+// published overnight. jsDelivr bundles this package as a CommonJS namespace,
+// so the default export is `{default: Vapi, __esModule: true}` rather than the
+// class itself — importing it as a default gives you an object, and `new` on
+// an object fails later with a confusing "cannot read properties of null".
+import * as VapiModule from "https://cdn.jsdelivr.net/npm/@vapi-ai/web@3.0.0/+esm";
+
+const Vapi = VapiModule.default?.default ?? VapiModule.default ?? VapiModule.Vapi;
+
+const el = id => document.getElementById(id);
+const statusEl = el("status"), dotEl = el("dot"), transcriptEl = el("transcript");
+let vapi = null, config = null, muted = false, partial = null;
+
+function setStatus(text, kind = "") {
+  statusEl.textContent = text;
+  dotEl.className = "dot " + kind;
+}
+
+function inCall(active) {
+  el("hangupRow").style.display = active ? "flex" : "none";
+  disableButtons(active);
+}
+
+function addLine(role, text) {
+  if (transcriptEl.querySelector(".hint")) transcriptEl.innerHTML = "";
+  const div = document.createElement("div");
+  div.className = "line " + (role === "user" ? "caller" : "agent");
+  div.innerHTML = `<span class="who">${role === "user" ? "caller" : "aria"}</span>`;
+  div.appendChild(document.createTextNode(text));
+  transcriptEl.appendChild(div);
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  return div;
+}
+
+function disableButtons(disabled) {
+  document.querySelectorAll("#modes button").forEach(b => b.disabled = disabled);
+}
+
+async function boot() {
+  disableButtons(true);  // stay disabled until the SDK is genuinely ready
+  try {
+    config = await fetch("call/config").then(r => r.json());
+  } catch {
+    setStatus("cannot reach the server", "error");
+    return;
+  }
+  if (!config.publicKey) {
+    setStatus("VAPI_PUBLIC_KEY is not set in .env — restart the server after adding it", "error");
+    return;
+  }
+  if (typeof Vapi !== "function") {
+    setStatus("the Vapi SDK did not load from the CDN", "error");
+    console.error("unexpected SDK module shape:", VapiModule);
+    return;
+  }
+  try {
+    vapi = new Vapi(config.publicKey);
+  } catch (e) {
+    setStatus("could not initialise the SDK: " + (e?.message || e), "error");
+    return;
+  }
+
+  vapi.on("call-start", () => { setStatus("connected — speak when ready", "live"); inCall(true); });
+  vapi.on("call-end", () => { setStatus("call ended", ""); inCall(false); });
+  vapi.on("error", e => {
+    setStatus("error: " + (e?.errorMsg || e?.error?.message || JSON.stringify(e)).slice(0, 160), "error");
+    inCall(false);
+  });
+  vapi.on("speech-start", () => setStatus("assistant speaking", "live"));
+  vapi.on("speech-end", () => setStatus("listening", "live"));
+  vapi.on("message", msg => {
+    if (msg.type !== "transcript") return;
+    if (msg.transcriptType === "partial") {
+      if (!partial || partial.dataset.role !== msg.role) {
+        partial = addLine(msg.role, msg.transcript);
+        partial.dataset.role = msg.role;
+        partial.style.opacity = ".55";
+      } else {
+        partial.lastChild.textContent = msg.transcript;
+      }
+    } else {
+      if (partial && partial.dataset.role === msg.role) {
+        partial.lastChild.textContent = msg.transcript;
+        partial.style.opacity = "1";
+        partial = null;
+      } else {
+        addLine(msg.role, msg.transcript);
+      }
+    }
+  });
+  disableButtons(false);
+  setStatus("ready", "");
+}
+
+document.querySelectorAll("#modes button").forEach(button => {
+  button.onclick = async () => {
+    const mode = button.dataset.mode;
+    const id = mode === "squad" ? config.squadId : config.assistantId;
+    if (!id) { setStatus(`no ${mode} id configured in .env`, "error"); return; }
+    transcriptEl.innerHTML = "";
+    partial = null;
+    setStatus("connecting…", "connecting");
+    try {
+      // The web SDK takes (assistant, overrides, squad) — a squad call passes
+      // the id in the third slot with the first left undefined.
+      if (mode === "squad") await vapi.start(undefined, undefined, id);
+      else await vapi.start(id);
+    } catch (e) {
+      setStatus("could not start: " + (e?.message || e), "error");
+      inCall(false);
+    }
+  };
+});
+
+el("hangup").onclick = () => vapi?.stop();
+el("mute").onclick = () => {
+  muted = !muted;
+  vapi?.setMuted(muted);
+  el("mute").textContent = muted ? "Unmute" : "Mute";
+};
+
+boot();
+</script>
+</body>
+</html>

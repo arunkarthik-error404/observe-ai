@@ -1,0 +1,67 @@
+"""Integration #2, in-call path: the post-call record written during the call."""
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
+
+from ..models import InteractionRecord
+from ..repositories import RepositoryError, repository
+from ..session import CallSession
+from .common import log
+
+# Off-call work that must not block a caller's turn. Small on purpose: if the
+# upstream system is slow enough to saturate four workers, the queue depth is
+# the signal, not something to paper over with more threads.
+WRITER = ThreadPoolExecutor(max_workers=4, thread_name_prefix="interaction-writer")
+
+
+def log_interaction(session: CallSession, args: dict[str, Any]) -> dict[str, Any]:
+    """Write the interaction record from inside the call.
+
+    The webhook is the primary write-back, but a model-driven call here means
+    the record exists even if the caller hangs up mid-sentence and the
+    end-of-call report is delayed or dropped. Both paths upsert on call_id, so
+    one call is always one row.
+
+    The write is handed to a worker thread rather than awaited: a Sheets append
+    measured ~1.4s live, and this tool fires while the caller is still on the
+    line waiting to be told goodbye. Nothing the caller hears depends on the
+    write succeeding, so it must not sit in conversational latency. Failures
+    are logged, and the end-of-call-report webhook — which no caller is waiting
+    on, and which Vapi retries — is the backstop.
+    """
+    record = InteractionRecord(
+        call_id=session.call_id,
+        caller_name=(session.customer.full_name if session.customer
+                     else args.get("caller_name") or "Unverified caller"),
+        caller_phone=session.claimed_phone,
+        summary=(args.get("summary") or "").strip(),
+        sentiment=(args.get("sentiment") or "neutral").strip().lower(),
+        intent=", ".join(session.intents),
+        authenticated=session.authenticated,
+        escalated=session.escalated,
+        outcome=(args.get("outcome") or session.auth_outcome).strip(),
+        claim_ids=", ".join(session.claims_discussed),
+        source="in-call-tool",
+    )
+
+    def write() -> None:
+        try:
+            repository().write_interaction(record)
+            log.info("interaction_logged", extra={"call_id": record.call_id, "source": record.source})
+        except RepositoryError as exc:
+            log.error(
+                "interaction_write_failed",
+                extra={"call_id": record.call_id, "error": str(exc),
+                       "dead_letter": record.model_dump()},
+            )
+
+    WRITER.submit(write)
+    return {
+        "ok": True,
+        "queued": True,
+        "instruction": (
+            "Record saved. Close the call warmly: ask if there is anything else, then say goodbye."
+        ),
+    }
