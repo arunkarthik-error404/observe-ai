@@ -13,7 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from ..models import normalize_phone
+from ..models import normalize_phone, normalize_sentiment
 
 
 def call_id(message: dict[str, Any]) -> str:
@@ -62,16 +62,32 @@ def tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def sentiment_from(analysis: dict[str, Any], structured: dict[str, Any]) -> str:
-    """Read both my schema and the default one Vapi substitutes in squad mode."""
+    """The caller's tone, or `neutral` when nothing reported it.
+
+    This used to fall back to `successEvaluation`, mapping pass -> positive and
+    fail -> negative, and that fallback was measuring the wrong thing. The two
+    prompts in `agents.json` say so themselves: `structuredDataPrompt` asks for
+    sentiment "based on the caller's tone, not on how helpful the assistant
+    was", while `successEvaluationPrompt` asks whether the assistant verified
+    identity before disclosing anything and handed off cleanly. One is about
+    the caller, the other is a policy-compliance verdict on us.
+
+    Conflating them inverts the case that matters most: an angry caller
+    correctly escalated is the assistant succeeding, and was stored as
+    `positive`. `successEvaluation` is also the one provider field this project
+    already distrusts — it passed a policy violation and failed a correct
+    escalation on live calls — so it was an unreliable signal answering a
+    question it was never asked.
+
+    `neutral` is honest about not knowing. The old fallback was a wrong answer
+    with a confident face, on a field that gets reported rather than acted on,
+    which is exactly the kind that gets quoted. The fallback rate is now a
+    measured number — see `scripts/check_sentiment.py`.
+    """
     for key in ("sentiment", "caller_sentiment", "callerSentiment"):
         value = structured.get(key)
         if value:
-            return str(value).lower()
-    evaluation = str(analysis.get("successEvaluation", "")).lower()
-    if evaluation in {"true", "pass", "success"}:
-        return "positive"
-    if evaluation in {"false", "fail"}:
-        return "negative"
+            return normalize_sentiment(str(value))
     return "neutral"
 
 

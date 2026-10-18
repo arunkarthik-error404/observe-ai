@@ -725,6 +725,71 @@ def test_outcome_falls_back_to_vapis_own_structured_field():
     assert written.sentiment == "negative"
 
 
+# --- sentiment: the field the PDF names and nothing used to own ------------
+def test_sentiment_is_not_inferred_from_the_assistants_own_success_grade():
+    """`successEvaluation` asks whether *we* followed policy; sentiment asks
+    about the caller's tone. Mapping one onto the other inverted the case that
+    matters most — an angry caller correctly escalated is the assistant
+    succeeding, and used to be stored as `positive`."""
+    call_id = new_call()
+    client.post("/vapi/webhook", json={"message": {
+        "type": "end-of-call-report",
+        "call": {"id": call_id},
+        "analysis": {
+            "summary": "Third call about the same delayed claim; escalated.",
+            "successEvaluation": "true",
+            # The squad shape: Vapi substituted its own schema, so no spelling
+            # of sentiment is present.
+            "structuredData": {"call_type": "Claims Support", "issue_type": "claim delay"},
+        },
+    }})
+    assert repository().interactions[call_id].sentiment == "neutral"
+
+
+def test_a_failed_success_grade_does_not_become_a_negative_caller():
+    """The mirror: a calm caller whose identity could not be matched was
+    stored as `negative` because the policy check failed."""
+    call_id = new_call()
+    client.post("/vapi/webhook", json={"message": {
+        "type": "end-of-call-report",
+        "call": {"id": call_id},
+        "analysis": {"summary": "Could not verify identity.", "successEvaluation": "false",
+                     "structuredData": {"call_type": "Claims Support"}},
+    }})
+    assert repository().interactions[call_id].sentiment == "neutral"
+
+
+def test_sentiment_is_constrained_to_the_configured_vocabulary():
+    """`agents.json` commits to four values in both the analysis schema and the
+    `log_interaction` tool, and nothing server-side enforced it — so "Positive "
+    and "MIXED" were stored verbatim and fragmented every aggregate."""
+    from app.models import SENTIMENTS, InteractionRecord
+
+    for raw, expected in [("Positive ", "positive"), ("NEGATIVE", "negative"),
+                          ("very frustrated", "frustrated"), ("angry", "frustrated"),
+                          ("mixed", "neutral"), ("", "neutral")]:
+        assert InteractionRecord(call_id="c", sentiment=raw).sentiment == expected
+
+    # Both write paths go through the model, so neither can store an off-enum value.
+    for path in ("end-of-call-report", "in-call-tool"):
+        record = InteractionRecord(call_id="c", sentiment="fuchsia", source=path)
+        assert record.sentiment in SENTIMENTS
+
+
+def test_an_unknown_sentiment_never_fails_the_write():
+    """A ValidationError here would 500 the end-of-call webhook, and Vapi
+    retries a non-2xx — so a mislabelled tone would cost the whole record."""
+    call_id = new_call()
+    response = client.post("/vapi/webhook", json={"message": {
+        "type": "end-of-call-report",
+        "call": {"id": call_id},
+        "analysis": {"summary": "Routine call.",
+                     "structuredData": {"sentiment": "cautiously optimistic"}},
+    }})
+    assert response.status_code == 200
+    assert repository().interactions[call_id].sentiment == "neutral"
+
+
 def tool_as(call_id: str, assistant: str, name: str, **arguments: Any) -> dict[str, Any]:
     """A tool call attributed to a named squad member."""
     payload = {

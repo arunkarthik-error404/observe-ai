@@ -106,6 +106,24 @@ jobs:
       - name: recall and refusal fixtures
         run: python scripts/check_kb.py
 
+  sentiment:
+    name: sentiment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
+      # The PDF names sentiment explicitly, and this field is produced by a
+      # provider's judgment plus our resolution of it. The resolution is ours
+      # and is what this measures; the classifier is not, and the harness says
+      # so rather than pretending otherwise.
+      - name: sentiment resolution metrics
+        run: python scripts/check_sentiment.py
+
   secrets:
     name: no credentials committed
     runs-on: ubuntu-latest

@@ -1,0 +1,55 @@
+{
+  "vocabulary": [
+    "positive",
+    "neutral",
+    "negative",
+    "frustrated"
+  ],
+  "sets": [
+    {
+      "set": "schema_honoured",
+      "cases": 5,
+      "accuracy": 1.0,
+      "vocabulary_conformance": 1.0,
+      "unreported_rate": 0.0,
+      "signal_lost_rate": 0.0,
+      "false_polarity_rate": 0.0
+    },
+    {
+      "set": "squad_substituted",
+      "cases": 5,
+      "accuracy": 1.0,
+      "vocabulary_conformance": 1.0,
+      "unreported_rate": 1.0,
+      "signal_lost_rate": 0.4,
+      "false_polarity_rate": 0.0
+    },
+    {
+      "set": "dirty_vocabulary",
+      "cases": 7,
+      "accuracy": 1.0,
+      "vocabulary_conformance": 1.0,
+      "unreported_rate": 0.143,
+      "signal_lost_rate": 0.0,
+      "false_polarity_rate": 0.0
+    },
+    {
+      "set": "alternate_spellings",
+      "cases": 3,
+      "accuracy": 1.0,
+      "vocabulary_conformance": 1.0,
+      "unreported_rate": 0.0,
+      "signal_lost_rate": 0.0,
+      "false_polarity_rate": 0.0
+    },
+    {
+      "set": "held_out",
+      "cases": 4,
+      "accuracy": 1.0,
+      "vocabulary_conformance": 1.0,
+      "unreported_rate": 0.5,
+      "signal_lost_rate": 0.5,
+      "false_polarity_rate": 0.0
+    }
+  ]
+}

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # --- normalisation ---------------------------------------------------------
 # Callers say phone numbers a dozen different ways ("five five five...",
@@ -37,6 +37,42 @@ def normalize_dob(raw: str | None) -> str:
 
 def normalize_claim_id(raw: str | None) -> str:
     return re.sub(r"[^A-Z0-9]", "", (raw or "").upper())
+
+
+# The vocabulary the agent config already commits to: the `sentiment` enum in
+# `analysisPlan.structuredDataSchema` and in the `log_interaction` tool both
+# list exactly these four. Nothing server-side enforced it, so a provider (or
+# the model) returning "Very frustrated", "MIXED" or "positive " stored that
+# string verbatim in `Call_Sentiment__c`, and any aggregate over the field
+# fragmented silently — before accuracy is even in question.
+SENTIMENTS = ("positive", "neutral", "negative", "frustrated")
+
+# Spellings seen or plausible from an LLM asked for one of four words. Mapped
+# rather than rejected: this field is not load-bearing for any decision, and a
+# synonym is still information.
+_SENTIMENT_ALIASES = {
+    "happy": "positive", "satisfied": "positive", "pleased": "positive",
+    "calm": "neutral", "mixed": "neutral", "unknown": "neutral", "": "neutral",
+    "upset": "negative", "unhappy": "negative", "dissatisfied": "negative",
+    "angry": "frustrated", "irritated": "frustrated", "annoyed": "frustrated",
+    "very frustrated": "frustrated", "frustration": "frustrated",
+}
+
+
+def normalize_sentiment(raw: str | None) -> str:
+    """Coerce to the four-word vocabulary, defaulting to `neutral`.
+
+    Deliberately lenient rather than strict. A `Literal` would raise, and this
+    value arrives on the end-of-call webhook — where a ValidationError means a
+    500, and a 500 means Vapi retries the report indefinitely. Losing the
+    record over a mislabelled tone would be a worse outcome than storing
+    `neutral`, so an unrecognised value is recorded as unknown rather than
+    allowed to fail the write.
+    """
+    value = " ".join((raw or "").strip().lower().split())
+    if value in SENTIMENTS:
+        return value
+    return _SENTIMENT_ALIASES.get(value, "neutral")
 
 
 # --- money, out loud ------------------------------------------------------
@@ -219,6 +255,9 @@ class InteractionRecord(BaseModel):
     # the agent said against the document it said it from.
     kb_consulted: str = ""
     summary: str = ""
+    # Constrained here rather than at each call site, because two paths write
+    # it — the end-of-call webhook and the in-call `log_interaction` tool — and
+    # only one of them was normalising at all.
     sentiment: str = "neutral"
     intent: str = ""
     authenticated: bool = False
@@ -233,3 +272,8 @@ class InteractionRecord(BaseModel):
     # searchable, and reportable where the record lives.
     transcript: str = ""
     source: str = "end-of-call-report"
+
+    @field_validator("sentiment", mode="before")
+    @classmethod
+    def _normalize_sentiment(cls, value: object) -> str:
+        return normalize_sentiment(value if isinstance(value, str) else "")
