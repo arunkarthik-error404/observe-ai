@@ -52,5 +52,14 @@ def search_knowledge_base(session: CallSession, args: dict[str, Any]) -> dict[st
     # A caller who verifies and then asks a general question reaches no claims
     # tool, so without this the confirmation they are owed never gets said.
     # No-op unless one is outstanding.
-    result["instruction"] = greeting_note(session) + result["instruction"]
+    result["instruction"] = greeting_note(session) + result["instruction"] + (
+        # The sharpest version of the same defect. On a live call the agent
+        # recited the office hours nine seconds before this tool was issued,
+        # from its own training data, and they happened to be right. That is
+        # the one place the retrieval design has nothing to fall back on: no
+        # tool ran, so no gate could refuse, and the record shows an empty
+        # `kb_consulted` with nothing else to say anything was wrong.
+        " And if you already answered this from your own knowledge, check it against the text "
+        "above and correct yourself plainly if it differs. You are not the source here; this is."
+    )
     return result

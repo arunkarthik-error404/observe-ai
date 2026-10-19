@@ -14,6 +14,30 @@ from ..repositories import RepositoryError, repository
 from ..session import CallSession, store
 from .common import log, unavailable
 
+# Measured across ten live calls: the model states a tool's outcome before the
+# tool has answered, every time. "I found an account" nine seconds before the
+# lookup was issued; "Thanks, Ana, you're all verified" a second before
+# `verify_identity` returned; a claim's denial reason before the claim arrived.
+# It has been right every time, because it front-runs the predictable half of
+# the answer — which is exactly why it is dangerous rather than funny.
+#
+# Nothing upstream prevents it. The model may emit speech and a tool call in
+# one completion, Vapi speaks the text the moment it exists, and no provider
+# setting forbids the pair (`tool_choice` governs whether a tool is called,
+# not whether words accompany it). Ten calls of prompt wording did not move it.
+#
+# So the server stops trying to prevent the sentence and makes every result
+# able to take it back. The gate already means a premature claim cannot be
+# acted on — `requires_auth` reads server state, not the model's belief — and
+# this is the other half: when what was said and what is true have come apart,
+# the caller hears about it.
+CORRECT_VERIFICATION = (
+    "If you have already told them they were verified, or used their name, correct it now in "
+    "plain words before anything else — \"sorry, I spoke too soon, that didn't match\" — and "
+    "stop using the name. A caller who has been told they passed a check they failed will "
+    "believe it."
+)
+
 
 def lookup_customer(session: CallSession, args: dict[str, Any]) -> dict[str, Any]:
     """Does an account exist for this phone number?"""
@@ -124,7 +148,7 @@ def verify_identity(session: CallSession, args: dict[str, Any]) -> dict[str, Any
                 "it was locked, and do not suggest trying again later — none of that helps a real "
                 "caller and all of it helps someone guessing. Say only that for the account's "
                 "protection you cannot verify them on this line, then call `escalate_to_human` "
-                "with reason `authentication_failed`."
+                "with reason `authentication_failed`. " + CORRECT_VERIFICATION
             ),
         }
 
@@ -178,7 +202,8 @@ def verify_identity(session: CallSession, args: dict[str, Any]) -> dict[str, Any
             "instruction": (
                 "That did not match. Stay warm and non-accusatory — say you could not match it and "
                 f"ask them to try again; they have {remaining} more attempt(s). Never reveal the "
-                "correct date of birth, and never hint at how close they were."
+                "correct date of birth, and never hint at how close they were. "
+                + CORRECT_VERIFICATION
             ),
         }
 
@@ -196,6 +221,6 @@ def verify_identity(session: CallSession, args: dict[str, Any]) -> dict[str, Any
             "then call `escalate_to_human` with reason `authentication_failed`. Say nothing about "
             "what happens next until that tool answers — it is what decides whether anyone can "
             "take the call right now, and 'I'll transfer you' followed by 'actually, the team is "
-            "closed' is worse for the caller than a short silence."
+            "closed' is worse for the caller than a short silence. " + CORRECT_VERIFICATION
         ),
     }

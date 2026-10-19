@@ -1443,3 +1443,56 @@ def test_every_entry_has_provenance_and_is_in_review():
     assert stale_entries() == []
     # And it actually fires: every entry is overdue against a far-future date.
     assert len(stale_entries(today="2099-01-01")) == 11
+
+
+# --- the model speaks before the tool answers; results must be able to
+#     take it back ------------------------------------------------------
+def test_a_failed_check_tells_the_agent_to_withdraw_a_premature_welcome():
+    """Measured across ten live calls: the agent states a tool's outcome
+    before the tool answers. One said "Thanks, Ana, you're all verified" a
+    second before `verify_identity` returned. Nothing upstream prevents the
+    sentence — the model may emit speech and a tool call in one completion —
+    so every result that could contradict what was already said has to say
+    how to withdraw it."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-418-4492")
+    wrong = tool(call_id, "verify_identity", date_of_birth="1965-02-27")
+    instruction = wrong["instruction"].lower()
+
+    assert wrong["verified"] is False
+    assert "already told them they were verified" in instruction
+    assert "stop using the name" in instruction
+    # And still no hint about the real date of birth.
+    assert "1965" not in instruction
+
+
+def test_a_lockout_also_withdraws_a_premature_welcome(monkeypatch):
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-418-4492")
+    for dob in ("1965-02-27", "1965-03-28", "1966-02-28"):
+        result = tool(call_id, "verify_identity", date_of_birth=dob)
+
+    assert result["locked"] is True
+    assert "already told them they were verified" in result["instruction"].lower()
+
+
+def test_claim_data_tells_the_agent_to_correct_what_it_guessed():
+    """A live call narrated a claim's type, status and denial reason 1.7s
+    before this tool answered."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-693-6678")
+    tool(call_id, "verify_identity", date_of_birth="1982-01-09")
+    instruction = tool(call_id, "get_claim_status")["instruction"].lower()
+
+    assert "if anything you have already said about this claim differs" in instruction
+    assert "what you said before reading it was a guess" in instruction
+
+
+def test_the_knowledge_base_tells_the_agent_it_is_not_the_source():
+    """The sharpest case: no tool ran, so no gate could refuse. A live call
+    recited the office hours from training data nine seconds early."""
+    instruction = tool(new_call(), "search_knowledge_base",
+                       query="what are your office hours")["instruction"].lower()
+
+    assert "already answered this from your own knowledge" in instruction
+    assert "you are not the source here" in instruction

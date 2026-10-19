@@ -168,6 +168,15 @@ def get_claim_status(session: CallSession, args: dict[str, Any]) -> dict[str, An
         "Do not convert them back into figures: say \"four thousand two hundred and fifty "
         "dollars\", never \"4250 dollars\"; say \"the twelfth of October\", never \"12 "
         "October\" or \"October 12th\". Read them across exactly as they are written here. "
-        "If the status is Denied, acknowledge that it is disappointing before explaining options."
+        "If the status is Denied, acknowledge that it is disappointing before explaining options. "
+        # A live call began "your claim for health outpatient services has been
+        # denied because the provider was out of network" 1.7s before this tool
+        # answered — the status, the reason and the claim type, all narrated
+        # ahead of the data. It was right. The one before guessed a claim count
+        # and was also right. Nothing stops the sentence, so the result has to
+        # be able to take it back.
+        "And if anything you have already said about this claim differs from what is here, "
+        "correct it plainly before going on. What is below is the record; what you said before "
+        "reading it was a guess."
     ) + (" " + DOCUMENT_INSTRUCTION if pending is not None else "")
     return payload
