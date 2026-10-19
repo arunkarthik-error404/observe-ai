@@ -23,19 +23,14 @@ controls on purpose — see `app/api/security.py`.
                   ▼
         FastAPI  /vapi/webhook
                   │
-    ┌─────────┬───┴────────┬───────────┬──────────────┬─────────────┐
-    ▼         ▼            ▼           ▼              ▼             ▼
-SessionStore tools/    knowledge/  repositories/  notifications/  audit.py
-(auth state, (8 tools, (retrieval  ├─ salesforce ◀─ Integration #1 (read)
- attempts,    gated by  + refusal  │                Integration #2 (write)
- timeline)    the       threshold) ├─ sheets      Slack ◀─ Integration #3
-              server)              └─ memory ◀─ tests & offline dev
+        ┌─────────┼──────────────┬────────────────┬──────────────┐
+        ▼         ▼              ▼                ▼              ▼
+   SessionStore  tools/       knowledge/      repositories/   notifications/
+   (auth state,  (8 tools,    (FAQ retrieval  ├─ salesforce ◀── Integration #1 (read)
+    attempts,     gated by     + refusal      │                 Integration #2 (write)
+    timeline)     the server)  threshold)     ├─ sheets       Slack ◀── Integration #3
+                                              └─ memory  ◀── tests & offline dev
 ```
-
-`audit.py` is the odd one out: it scores the agent's own speech after each
-call against the rules the prompt states, so prompt adherence is a number per
-call rather than something you check by listening. See
-[Measuring what the prompt cannot enforce](#measuring-what-the-prompt-cannot-enforce).
 
 ## The flows
 
@@ -53,9 +48,7 @@ replays any of them against a running server without spending voice minutes.
 
 Built on top of those flows: multi-agent orchestration, a knowledge base with
 a refusal threshold, Slack as a third integration, two interchangeable systems
-of record behind one interface swappable with one environment variable, and a
-post-call audit that scores the agent's own speech against the rules it was
-given.
+of record behind one interface, swappable with one environment variable.
 
 ## How a call is routed
 
@@ -272,46 +265,13 @@ verification is an error rather than a judgement call.
 **The prompts carry their own history, and the model never sees it.**
 `<!-- why ... -->` blocks hold the live call behind each rule so nobody
 deletes a rule that looks fussy without knowing what it cost; they are
-stripped at provision time. That withholds about 7,000 characters. It is not
-cosmetic: every paragraph of justification dilutes the rule it justifies, and
-two calls broke four rules that were present in full, with worked examples, in
-the prompt they were running.
+stripped at provision time, withholding about 7,000 characters.
 
-## Measuring what the prompt cannot enforce
-
-Most rules in this README are enforced somewhere a prompt cannot reach them —
-the auth gate, the spoken-number formatting, the refusal threshold. The ones
-that can only ever be prompt rules are different: nothing about a broken one
-looks broken. The call sounds fine, no test fails, and the only evidence is in
-a transcript nobody reads.
-
-So `app/audit.py` reads it. After each call the webhook scores the agent's own
-speech against nine rules the prompt states, and writes one `call_audit` line
-with a count per check and the quote that triggered it.
-
-| Check | What it catches |
-|---|---|
-| `name_before_verification` | the caller named before `verify_identity` returned it |
-| `outcome_before_result` | the account confirmed or denied before the lookup answered |
-| `fact_before_retrieval` | a knowledge-base answer given before the knowledge base gave it |
-| `filler_before_emergency` | a filler in front of the 911 script |
-| `emergency_call_not_ended` | the line still open 30s after the emergency script |
-| `filler` | the phrases the prompt lists as wrong, verbatim |
-| `figures_for_a_voice` | digits spoken where the tools sent words |
-| `stacked_questions` | two questions in one turn |
-| `turn_too_long` | over 400 characters, ~25s of uninterrupted speech |
-
-Two things make it worth having rather than reassuring. It compares what was
-said against what the tool *later returned*, so a claim made early is provable
-rather than suspected. And it is deliberately silent where the data cannot
-support a finding: `lookup_customer` and `get_claim_status` speak a bridging
-line that Vapi utters at dispatch and the transcriber merges into the agent's
-own segment under one timestamp, so on those two tools nothing establishes
-which side of the result a sentence fell on — and the check says nothing
-rather than guessing.
-
-That turns "did it follow the prompt?" from a question you answer by listening
-into one you answer with a number per call.
+The split is deliberate. That history belongs to whoever edits the file, not
+to a model deciding what to say next — the prompts had grown to roughly 4,400
+tokens of instruction and most of the growth was case notes, which dilute the
+rules they justify. Keeping them in the file and out of the prompt costs
+nothing and keeps both readable.
 
 ## Integrations
 
@@ -378,7 +338,7 @@ app/
   seed.py              the demo dataset, one persona per scenario
   notifications.py     Integration #3: escalation to Slack
   redaction.py         PII masking for the log stream
-  audit.py             post-call scoring of the agent's own speech
+  audit.py             post-call checks on what was said, from the transcript
   api/
     webhook.py         Vapi's one endpoint, routed by message type
     security.py        shared-secret and URL-token authentication
@@ -506,12 +466,9 @@ Voice agents cannot be stepped through in a debugger, so the loop is:
    the knowledge base, which the tests cannot reach.
 3. `/debug` — during a live call: auth state, failed attempts, every tool call
    with arguments, result, latency, and any safety override.
-4. `call_audit` in the logs — after each call, which spoken rules held and
-   which did not, with the quote behind each. The one check that works on
-   calls nobody is watching.
-5. JSON logs correlated by `call_id` — `grep '"call_id":"<id>"'` reconstructs a
+4. JSON logs correlated by `call_id` — `grep '"call_id":"<id>"'` reconstructs a
    call end to end.
-6. Vapi's own transcript and recording for anything that is actually an
+5. Vapi's own transcript and recording for anything that is actually an
    audio-layer problem (endpointing, barge-in, a misheard digit).
 
 Most of the fixes in this repo came from step 3 catching something the tests
