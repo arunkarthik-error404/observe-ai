@@ -134,6 +134,39 @@ GOODBYE = re.compile(
 _CLAIM_ID = re.compile(r"\b(?:CLM|POL)[-\s]?\d+", re.IGNORECASE)
 
 
+# Ordinary words a short name sits one edit away from. Without this "Ana"
+# matches the "an" in "an account" on every call that finds one.
+NOT_NAMES = {
+    "an", "and", "any", "the", "a", "are", "can", "day", "has", "had", "her", "him",
+    "his", "how", "its", "may", "new", "not", "now", "one", "our", "out", "own",
+    "see", "she", "that", "them", "then", "they", "this", "was", "way", "who", "you",
+}
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    """True when `a` becomes `b` with at most one insert, delete or substitution."""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) > len(b):
+        a, b = b, a
+    i = j = 0
+    edited = False
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1
+            j += 1
+            continue
+        if edited:
+            return False
+        edited = True
+        if len(a) == len(b):
+            i += 1
+        j += 1
+    return True
+
+
 def _normalise(line: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", line.lower()).strip()
 
@@ -277,6 +310,29 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
         (name, re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE)) for name in sorted(names)
     ]
 
+    def names_in(said: str) -> str | None:
+        """The verified name this turn used, allowing for how it was heard.
+
+        Exact first, then one character out. The transcript is a transcription
+        of the agent's own audio, so a name comes back as the transcriber
+        heard it: "Ana" was written "Anna" on one live call and the check
+        found nothing, which is the quiet way a security-shaped finding goes
+        missing. Short common words are excluded so "Ana" does not match the
+        "an" in "an account".
+        """
+        for name, pattern in name_patterns:
+            if pattern.search(said):
+                return name
+        for name in sorted(names):
+            if len(name) < 3:
+                continue
+            for word in re.findall(r"[a-z']+", said.lower()):
+                if word in NOT_NAMES or abs(len(word) - len(name)) > 1:
+                    continue
+                if _within_one_edit(word, name):
+                    return name
+        return None
+
     for entry in entries:
         if entry.get("role") not in SPEECH_ROLES:
             continue
@@ -288,15 +344,14 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
 
         # 1. The caller's name, before the tool that supplies it has returned it.
         if verified_at is None or at < verified_at:
-            for name, pattern in name_patterns:
-                if pattern.search(said):
-                    when = ("verification never succeeded in this call"
-                            if verified_at is None
-                            else f"verify_identity returned it at {verified_at}s")
-                    findings.append(_finding(
-                        "name_before_verification", entry,
-                        f"said {name.title()!r} at {at}s; {when}", said))
-                    break
+            used = names_in(said)
+            if used:
+                when = ("verification never succeeded in this call"
+                        if verified_at is None
+                        else f"verify_identity returned it at {verified_at}s")
+                findings.append(_finding(
+                    "name_before_verification", entry,
+                    f"said {used.title()!r} at {at}s; {when}", said))
 
         # 2. The account's existence asserted before the lookup has said so.
         #

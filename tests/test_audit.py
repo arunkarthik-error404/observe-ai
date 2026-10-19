@@ -71,9 +71,48 @@ def test_a_name_never_verified_in_the_call_is_still_caught():
     assert "never succeeded" in names[0]["detail"]
 
 
-def test_a_name_inside_another_word_is_not_a_disclosure():
+def test_a_name_the_transcriber_spelled_differently_is_still_caught():
+    """Call 01a15281 said "Thanks, Anna." at 46.4s and `verify_identity`
+    returned at 47.5s. The verified name is Ana; the transcript is a
+    transcription of the agent's own audio, so it came back as the
+    transcriber heard it and the exact match found nothing. Same reason
+    "Lena" was missed as "Laina" on an earlier call."""
+    findings = audit_call([
+        bot(46.4, "Thanks, Anna."),
+        result(47.5, "verify_identity", {"verified": True, "greeting_name": "Ana"}),
+    ], {"Ana Duarte", "Ana"})
+
+    names = [f for f in findings if f["check"] == "name_before_verification"]
+    assert len(names) == 1
+
+
+def test_an_ordinary_word_one_edit_from_a_short_name_is_not_a_disclosure():
+    """"Ana" sits one edit from "an", which appears on every call that finds
+    an account. Fuzzy matching without this fires constantly."""
+    findings = audit_call([
+        bot(25.0, "I found an account. Can you give me the date of birth?"),
+        result(40.0, "verify_identity", {"verified": True}),
+    ], {"Ana Duarte", "Ana"})
+
+    assert [f for f in findings if f["check"] == "name_before_verification"] == []
+
+
+def test_a_possessive_form_of_the_name_is_still_the_name():
+    """This asserted the opposite until the matcher learned to allow a
+    character either way. "The Daniels invoice", said before verification, is
+    the caller's name out loud — the possessive does not make it not a
+    disclosure, and a check that waves it through is the easiest one to
+    defeat by accident."""
     findings = audit_call([bot(10.0, "I can see the daniels invoice is attached.")],
                           {"Dan", "Daniel"})
+    assert [f["check"] for f in findings] == ["name_before_verification"]
+
+
+def test_a_different_word_of_similar_shape_is_not_a_disclosure():
+    """One edit, not three. The matcher has to stay tight enough that
+    ordinary speech does not keep tripping a security finding."""
+    findings = audit_call([bot(10.0, "Our markets team handles that, not this line.")],
+                          {"Marcus Webb", "Marcus"})
     assert [f for f in findings if f["check"] == "name_before_verification"] == []
 
 
