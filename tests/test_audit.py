@@ -10,6 +10,7 @@ present, verbatim, in the system prompt they were running.
 from __future__ import annotations
 
 from app.audit import audit_call, audit_summary
+from app.tools.common import EMERGENCY_SCRIPT
 
 
 def bot(at: float, said: str) -> dict:
@@ -95,6 +96,34 @@ def test_an_account_announced_before_the_lookup_answers_is_caught():
     assert len(early) == 1
     assert early[0]["at_seconds"] == 27.9
     assert "27.5s" in early[0]["detail"]
+
+
+def test_an_account_announced_before_the_lookup_is_even_issued_is_caught():
+    """The version that only watched the gap between the call and the result
+    scored two live calls clean: both announced the account eight to ten
+    seconds before `lookup_customer` was issued at all, which put the worse
+    form of the bug outside the window."""
+    findings = audit_call([
+        bot(24.8, "Let me look that up for you. I found an account with that phone number."),
+        calls(32.2, "lookup_customer"),
+        result(35.4, "lookup_customer", {"found": True}),
+    ], NAMES)
+
+    early = [f for f in findings if f["check"] == "outcome_before_result"]
+    assert len(early) == 1
+    assert early[0]["at_seconds"] == 24.8
+
+
+def test_the_knowledge_base_listing_four_channels_is_not_an_account_claim():
+    """"There are four ways to submit documents" matched an earlier, looser
+    pattern on any call where no lookup ran — a false positive on the most
+    ordinary answer the agent gives."""
+    findings = audit_call([
+        bot(60.0, "There are four ways to submit documents. The portal is fastest."),
+        bot(75.0, "There are no claims on this account at the moment."),
+    ], NAMES)
+
+    assert [f for f in findings if f["check"] == "outcome_before_result"] == []
 
 
 def test_the_same_sentence_after_the_result_is_fine():
@@ -185,6 +214,95 @@ def test_the_signoff_is_exempt_even_when_the_transcription_mangles_it():
     ], NAMES)
 
     assert findings == []
+
+
+# --- the emergency path, and turn shape -----------------------------------
+def test_a_filler_in_front_of_the_911_script_is_its_own_finding():
+    """`report_emergency` returns an instruction naming this exact failure.
+    A live call answered a caller whose kitchen was on fire with "Just a sec."
+    and then the script. Counted as an ordinary filler it is one of fourteen."""
+    findings = audit_call([
+        result(71.3, "report_emergency", {"emergency": True}),
+        bot(72.8, "Just a sec. If this is a life threatening emergency, please hang up and "
+                  "dial 9 11 right now. I'll let you go now so you can call them."),
+    ], NAMES)
+
+    assert [f["check"] for f in findings if "emergency" in f["check"]] == ["filler_before_emergency"]
+
+
+def test_the_911_script_on_its_own_is_clean():
+    findings = audit_call([
+        result(71.3, "report_emergency", {"emergency": True}),
+        bot(72.8, "If this is a life threatening emergency, please hang up and dial 9 11 right "
+                  "now. Your safety matters far more than this claim. I'll let you go now."),
+    ], NAMES)
+
+    assert findings == []
+
+
+def test_a_line_left_open_after_an_emergency_is_caught():
+    """A caller cannot dial emergency services while still connected. On a live
+    call the agent said the script and held the line for thirty-two seconds —
+    long enough for the configured idle message, "I'm still here whenever
+    you're ready", to play at someone whose kitchen was on fire."""
+    findings = audit_call([
+        result(71.3, "report_emergency", {"emergency": True}),
+        bot(72.8, "Please hang up and dial 9 11 right now. I'll let you go now."),
+        bot(104.9, "I'm still here whenever you're ready."),
+        bot(112.3, "Hold on a sec. Thanks for calling Observe Insurance."),
+    ], NAMES)
+
+    stuck = [f for f in findings if f["check"] == "emergency_call_not_ended"]
+    assert len(stuck) == 1
+    assert "41.0s after report_emergency" in stuck[0]["detail"]
+
+
+def test_an_emergency_ended_promptly_is_not_flagged():
+    findings = audit_call([
+        result(71.3, "report_emergency", {"emergency": True}),
+        bot(72.8, "Please hang up and dial 9 11 right now. I'll let you go now."),
+    ], NAMES)
+
+    assert [f for f in findings if f["check"] == "emergency_call_not_ended"] == []
+
+
+def test_two_questions_in_one_turn_are_caught():
+    findings = audit_call([
+        bot(52.2, "Would you like me to explain how to start one? Transfer you to someone?"),
+    ], NAMES)
+    assert [f["check"] for f in findings] == ["stacked_questions"]
+
+
+def test_a_monologue_is_caught():
+    """"One or two sentences per turn, then stop and listen" is the prompt's
+    first rule about speech. A live call answered with 453 characters, about
+    twenty-five seconds of it, and the caller then took twenty seconds to
+    answer the question on the end of it."""
+    long_turn = ("Your claim for home water damage is currently awaiting documents. " * 7).strip()
+    findings = audit_call([bot(55.6, long_turn)], NAMES)
+
+    assert [f["check"] for f in findings] == ["turn_too_long"]
+    assert "characters in one turn" in findings[0]["detail"]
+
+
+def test_the_audit_recognises_the_real_emergency_script():
+    """`filler_before_emergency` and the length exemption both depend on
+    spotting the script in the transcript. Reword `EMERGENCY_SCRIPT` so the
+    hint no longer matches and the safety check goes quiet without failing —
+    the worst way for a check to break. The script as written is spoken as
+    "dial nine one one", which the transcriber renders back as digits, so the
+    pattern has to match the spoken form rather than the written one."""
+    from app.audit import EMERGENCY_SCRIPT_HINT
+
+    spoken = EMERGENCY_SCRIPT.replace("nine one one", "9 1 1")
+    assert EMERGENCY_SCRIPT_HINT.search(spoken), "the audit can no longer see the 911 script"
+
+    # And a filler in front of it is caught, using the real wording.
+    findings = audit_call([
+        result(71.0, "report_emergency", {"emergency": True}),
+        bot(72.0, "Just a sec. " + spoken),
+    ], NAMES)
+    assert any(f["check"] == "filler_before_emergency" for f in findings)
 
 
 # --- the two calls this module was written for ----------------------------

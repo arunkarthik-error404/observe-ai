@@ -56,14 +56,44 @@ FILLERS = re.compile(
     re.IGNORECASE,
 )
 
-# "I found an account", "there's no account", "I can't find an account" — any
-# claim about what a lookup will say, in the window before it has said it.
+# A claim about whether the account exists, made before the lookup has said.
+# Deliberately requires the word account/record/policy near the verb: an
+# earlier, looser version matched any "there are", which flagged the knowledge
+# base's own "There are four ways to submit documents" on calls where no
+# lookup ever ran.
 LOOKUP_OUTCOME = re.compile(
-    r"\b(?:i (?:have |can )?(?:found|see|located)\b|there(?:'s| is| are)\b"
-    r"|i (?:can(?:'?t| not)|could(?:n'?t| not)) (?:find|see|locate)\b"
-    r"|no account\b|don'?t have an account\b)",
+    r"\b(?:"
+    r"(?:i )?(?:have |can )?(?:found|see|see that|located|got|have)\s+"
+    r"(?:an?|your|that)\s+(?:account|record|policy)"
+    r"|there(?:'s| is| are)\s+(?:an?|no)\s+(?:account|record|policy)"
+    r"|(?:can(?:'?t| not)|could(?:n'?t| not)|unable to)\s+(?:find|see|locate)\s+"
+    r"(?:an?|your|that)?\s*(?:account|record|policy)"
+    r"|no account\b|don'?t have an account\b"
+    r")",
     re.IGNORECASE,
 )
+
+# The emergency script must be the next thing the caller hears, and then the
+# call must end so they can dial out. Both halves failed on one live call.
+EMERGENCY_SCRIPT_HINT = re.compile(r"\b(?:dial 9\s?1\s?1|call 9\s?1\s?1|emergency service)",
+                                   re.IGNORECASE)
+
+# A turn long enough that the caller stops listening. "One or two sentences
+# per turn, then stop and listen" is the prompt's first rule about speech, and
+# a live call answered with 453 characters — about twenty-five seconds of
+# uninterrupted speech — then asked a question the caller took twenty seconds
+# to answer, because they had just been talked at.
+#
+# 400 characters rather than a sentence count: ASR punctuation is unreliable,
+# and what matters is seconds of audio, which tracks length closely.
+MAX_TURN_CHARS = 400
+
+# How long the line may stay open after the emergency script before it counts
+# as having failed to end. Generous on purpose: the script itself takes a few
+# seconds to speak, and a caller who says they are safe and wants to carry on
+# is a legitimate reason to stay — the prompt allows it. Thirty seconds is
+# past both.
+EMERGENCY_GRACE_SECONDS = 30.0
 
 # A bare figure where the tools supplied words. Money with a currency symbol or
 # a "dollars" suffix, and numeric dates in either order.
@@ -187,6 +217,8 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
     verified_at: float | None = None
     lookup_issued_at: float | None = None
     lookup_answered_at: float | None = None
+    emergency_at: float | None = None
+    last_speech_at: float = 0.0
 
     for entry in entries:
         role = entry.get("role")
@@ -201,6 +233,10 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
                 verified_at = _at(entry)
             elif name == "lookup_customer" and lookup_answered_at is None:
                 lookup_answered_at = _at(entry)
+            elif name == "report_emergency" and emergency_at is None:
+                emergency_at = _at(entry)
+        elif role in SPEECH_ROLES and (entry.get("message") or "").strip():
+            last_speech_at = max(last_speech_at, _at(entry))
 
     names = {n.strip().lower() for n in verified_names if n and n.strip()}
     # Match whole words only: a surname inside another word is not a disclosure.
@@ -229,23 +265,26 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
                         f"said {name.title()!r} at {at}s; {when}", said))
                     break
 
-        # 2. A lookup outcome asserted while the lookup is still in flight. The
-        #    request-start line already covers that gap, so this is the model
-        #    filling a silence that was not silent. The usual mechanism is one
-        #    completion carrying both the tool call and a sentence about what it
-        #    is going to say.
-        in_flight = (
-            lookup_issued_at is not None
-            and at >= lookup_issued_at
-            and (lookup_answered_at is None or at < lookup_answered_at)
-        )
-        if in_flight:
+        # 2. The account's existence asserted before the lookup has said so.
+        #
+        #    The window is everything before the RESULT, not the gap between
+        #    the call and the result. An earlier version checked only that gap
+        #    and scored two live calls clean: both announced "I found an
+        #    account" eight to ten seconds before `lookup_customer` was even
+        #    issued, so the model was describing a lookup it had not started.
+        #    Sitting outside the window made the worse version of the bug the
+        #    one the audit could not see.
+        before_answer = lookup_answered_at is None or at < lookup_answered_at
+        if before_answer:
             match = LOOKUP_OUTCOME.search(said)
             if match:
+                when = ("lookup_customer was never called"
+                        if lookup_issued_at is None
+                        else f"it was issued at {lookup_issued_at}s and answered at "
+                             f"{lookup_answered_at}s")
                 findings.append(_finding(
                     "outcome_before_result", entry,
-                    f"asserted {match.group(0)!r} while lookup_customer was still running "
-                    f"(issued {lookup_issued_at}s)", said))
+                    f"asserted {match.group(0)!r} at {at}s; {when}", said))
 
         # 3. The filler phrases the prompt lists as Wrong.
         for match in FILLERS.finditer(said):
@@ -259,12 +298,59 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
                 "figures_for_a_voice", entry,
                 f"said {match.group(0)!r} as figures; the tools send words", said))
 
-        # 5. A farewell in front of the one that plays automatically.
+        # 5. A filler in front of the emergency script.
+        #
+        #    `report_emergency` returns `say_verbatim` and an instruction that
+        #    names this exact failure — "with nothing before it, no 'just a
+        #    sec', no filler". A live call answered a caller whose kitchen was
+        #    on fire with "Just a sec. If this is a life threatening emergency,
+        #    please hang up and dial 911". Scored as an ordinary filler it is
+        #    one of five; it is not one of five.
+        if EMERGENCY_SCRIPT_HINT.search(said):
+            lead = said[: said.upper().find("IF THIS") if "IF THIS" in said.upper() else 40]
+            match = FILLERS.search(lead)
+            if match:
+                findings.append(_finding(
+                    "filler_before_emergency", entry,
+                    f"said {match.group(0)!r} in front of the 911 script", said))
+
+        # 6. Stacked questions — the prompt asks for one at a time.
+        if said.count("?") > 1:
+            findings.append(_finding(
+                "stacked_questions", entry,
+                f"{said.count('?')} questions in one turn", said))
+
+        # 7. A turn the caller cannot be expected to hold. The emergency script
+        #    is exempt: it is `say_verbatim` and its length is deliberate.
+        if len(said) > MAX_TURN_CHARS and not EMERGENCY_SCRIPT_HINT.search(said):
+            findings.append(_finding(
+                "turn_too_long", entry,
+                f"{len(said)} characters in one turn, roughly "
+                f"{round(len(said) / 18)}s of speech", said))
+
+        # 8. A farewell in front of the one that plays automatically.
         match = GOODBYE.search(said)
         if match:
             findings.append(_finding(
                 "goodbye_before_signoff", entry,
                 f"said {match.group(0)!r}; endCallMessage speaks the sign-off", said))
+
+    # 9. The call outliving the emergency that should have ended it.
+    #
+    #    A caller cannot dial emergency services while they are still
+    #    connected, so `report_emergency` tells the model to say the script
+    #    and end the call. On a live call it said the script and then held the
+    #    line for thirty-two seconds, long enough for the configured idle
+    #    message — "I'm still here whenever you're ready" — to play at someone
+    #    whose kitchen was on fire.
+    if emergency_at is not None and last_speech_at - emergency_at > EMERGENCY_GRACE_SECONDS:
+        findings.append({
+            "check": "emergency_call_not_ended",
+            "at_seconds": round(last_speech_at, 2),
+            "detail": (f"the line was still open {round(last_speech_at - emergency_at, 1)}s "
+                       f"after report_emergency answered at {emergency_at}s"),
+            "said": "",
+        })
 
     return findings
 
