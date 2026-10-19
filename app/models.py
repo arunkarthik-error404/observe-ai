@@ -21,15 +21,39 @@ def normalize_phone(raw: str | None) -> str:
     return digits
 
 
+# A caller says the day as a word, "the twelfth," and the tool schema tells
+# the model to pass the date "as the caller said it" — so the word itself,
+# not a digit, is what regularly reaches this function. Built from ones +
+# a twenty/thirty prefix rather than hand-written, so 1-31 stays complete.
+_ORDINAL_WORDS: dict[str, int] = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6,
+    "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10, "eleventh": 11,
+    "twelfth": 12, "thirteenth": 13, "fourteenth": 14, "fifteenth": 15,
+    "sixteenth": 16, "seventeenth": 17, "eighteenth": 18, "nineteenth": 19,
+    "twentieth": 20, "thirtieth": 30, "thirty-first": 31,
+}
+for _ones_word, _ones_n in list(_ORDINAL_WORDS.items())[:9]:  # first..ninth
+    _ORDINAL_WORDS[f"twenty-{_ones_word}"] = 20 + _ones_n
+    _ORDINAL_WORDS[f"twenty {_ones_word}"] = 20 + _ones_n
+
+# Longest phrase first, so "twenty-first" matches whole rather than leaving a
+# stray "twenty-" around a "first" matched on its own.
+_ORDINAL_PATTERN = re.compile(
+    r"\b(" + "|".join(sorted((re.escape(w) for w in _ORDINAL_WORDS), key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
 def normalize_dob(raw: str | None) -> str:
     """Return YYYY-MM-DD for the formats an STT layer realistically emits."""
     value = (raw or "").strip()
     if not value:
         return ""
     # The tool schema tells the model to pass the date "as the caller said
-    # it," which naturally comes back as "April 12th, 1988." None of the
-    # formats below parse a trailing ordinal suffix, so a correct date of
-    # birth silently failed to match a live caller's own record.
+    # it," which naturally comes back as "April 12th, 1988" or "April
+    # twelfth, 1988." None of the formats below parse an ordinal suffix or
+    # an ordinal word, so a correct date of birth silently failed to match.
+    value = _ORDINAL_PATTERN.sub(lambda m: str(_ORDINAL_WORDS[m.group(0).lower()]), value)
     value = re.sub(r"(?<=\d)(st|nd|rd|th)\b", "", value, flags=re.IGNORECASE)
     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%d/%m/%Y", "%B %d %Y",
                 "%B %d, %Y", "%b %d %Y", "%b %d, %Y", "%m/%d/%y"):

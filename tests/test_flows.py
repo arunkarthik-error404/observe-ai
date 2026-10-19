@@ -99,6 +99,16 @@ def test_dob_with_an_ordinal_suffix_still_verifies():
     assert verified["verified"] is True
 
 
+def test_dob_with_a_spelled_out_ordinal_still_verifies():
+    """A caller says the day as a word, "the twelfth," and the model can pass
+    that word through rather than a digit. Same lockout, same real call, one
+    attempt further in: the digit-suffix fix alone didn't catch this form."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-361-2234")
+    verified = tool(call_id, "verify_identity", date_of_birth="April twelfth, 1988")
+    assert verified["verified"] is True
+
+
 def test_documents_required_branch():
     call_id = new_call()
     tool(call_id, "lookup_customer", phone_number="5553612234")
