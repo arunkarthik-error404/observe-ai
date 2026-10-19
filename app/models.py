@@ -55,8 +55,13 @@ def normalize_dob(raw: str | None) -> str:
     # an ordinal word, so a correct date of birth silently failed to match.
     value = _ORDINAL_PATTERN.sub(lambda m: str(_ORDINAL_WORDS[m.group(0).lower()]), value)
     value = re.sub(r"(?<=\d)(st|nd|rd|th)\b", "", value, flags=re.IGNORECASE)
+    # Day-before-month with a spelled-out month ("12 April 1988") is the
+    # standard order outside the US, and every spelled-month format above
+    # was month-first only, so this read as a mismatch against a correct
+    # date on a live call.
     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%d/%m/%Y", "%B %d %Y",
-                "%B %d, %Y", "%b %d %Y", "%b %d, %Y", "%m/%d/%y"):
+                "%B %d, %Y", "%b %d %Y", "%b %d, %Y", "%m/%d/%y",
+                "%d %B %Y", "%d %B, %Y", "%d %b %Y", "%d %b, %Y"):
         try:
             return datetime.strptime(value, fmt).date().isoformat()
         except ValueError:

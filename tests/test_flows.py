@@ -109,6 +109,16 @@ def test_dob_with_a_spelled_out_ordinal_still_verifies():
     assert verified["verified"] is True
 
 
+def test_dob_said_day_before_month_still_verifies():
+    """"12 April 1988," day before month with the month spelled out, is the
+    everyday order outside the US. Caught live mid-demo: every spelled-month
+    format was month-first only, so a correct date read as a mismatch."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-361-2234")
+    verified = tool(call_id, "verify_identity", date_of_birth="12 April 1988")
+    assert verified["verified"] is True
+
+
 def test_documents_required_branch():
     call_id = new_call()
     tool(call_id, "lookup_customer", phone_number="5553612234")
