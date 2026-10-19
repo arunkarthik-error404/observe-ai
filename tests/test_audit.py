@@ -230,6 +230,23 @@ def test_a_filler_in_front_of_the_911_script_is_its_own_finding():
     assert [f["check"] for f in findings if "emergency" in f["check"]] == ["filler_before_emergency"]
 
 
+def test_a_filler_is_caught_even_when_the_script_fragments():
+    """Call 01a1526b. The agent said "Nope. Give me a moment." and then the
+    script, and the 911 digits came back across three transcript segments —
+    "dial 9", "1", "1 1 right now". The first version of this check needed the
+    digits contiguous, so it scored the call as one ordinary filler and the
+    safety finding went missing."""
+    findings = audit_call([
+        caller(54.9, "Hey. Uh, just a second. My kitchen is on fire right now."),
+        bot(62.8, "Nope. Give me a moment. If this is a life threatening emergency, "
+                  "please hang up and dial 9"),
+        result(72.8, "report_emergency", {"emergency": True}),
+        bot(73.5, "1 1 right now your safety matters far more than this claim,"),
+    ], set())
+
+    assert any(f["check"] == "filler_before_emergency" for f in findings)
+
+
 def test_the_911_script_on_its_own_is_clean():
     findings = audit_call([
         result(71.3, "report_emergency", {"emergency": True}),

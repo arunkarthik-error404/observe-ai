@@ -75,8 +75,21 @@ LOOKUP_OUTCOME = re.compile(
 
 # The emergency script must be the next thing the caller hears, and then the
 # call must end so they can dial out. Both halves failed on one live call.
-EMERGENCY_SCRIPT_HINT = re.compile(r"\b(?:dial 9\s?1\s?1|call 9\s?1\s?1|emergency service)",
-                                   re.IGNORECASE)
+#
+# Tolerant of a fragmented delivery on purpose. The first version required the
+# digits contiguous — `dial 9\s?1\s?1` — and the one live call it was written
+# for split them across three transcript segments: "dial 9", then "1", then
+# "1 1 right now". The script went out in pieces and the safety check went
+# quiet, which is the worst way for this particular check to fail.
+EMERGENCY_SCRIPT_HINT = re.compile(
+    r"\b(?:hang up and dial|dial 9|call 9\s?1\s?1|emergency service|life.?threatening)",
+    re.IGNORECASE,
+)
+
+# A filler this far before the emergency tool answered still counts as being
+# in front of the script: the model emits the filler and the tool call in one
+# completion, so the filler is spoken while the tool is in flight.
+EMERGENCY_LEAD_SECONDS = 15.0
 
 # A turn long enough that the caller stops listening. "One or two sentences
 # per turn, then stop and listen" is the prompt's first rule about speech, and
@@ -306,9 +319,16 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
         #    on fire with "Just a sec. If this is a life threatening emergency,
         #    please hang up and dial 911". Scored as an ordinary filler it is
         #    one of five; it is not one of five.
-        if EMERGENCY_SCRIPT_HINT.search(said):
-            lead = said[: said.upper().find("IF THIS") if "IF THIS" in said.upper() else 40]
-            match = FILLERS.search(lead)
+        #    Two ways in, because either one alone missed a live call: the
+        #    utterance looks like the script, OR it sits in the window around
+        #    the moment `report_emergency` answered.
+        near_emergency = (
+            emergency_at is not None and at >= emergency_at - EMERGENCY_LEAD_SECONDS
+        )
+        if EMERGENCY_SCRIPT_HINT.search(said) or near_emergency:
+            cut = said.upper().find("IF THIS")
+            lead = said[: cut if cut > 0 else 40]
+            match = FILLERS.search(lead) or (FILLERS.search(said) if near_emergency else None)
             if match:
                 findings.append(_finding(
                     "filler_before_emergency", entry,

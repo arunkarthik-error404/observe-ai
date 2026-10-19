@@ -85,9 +85,9 @@ jobs:
         env:
           SERVER_URL: https://ci.invalid
           VAPI_SECRET: ci-placeholder
-        run: |
-          python scripts/provision_vapi.py --mode squad --dry-run > /dev/null
-          python scripts/provision_vapi.py --mode single --dry-run > /dev/null
+        # One invocation, because there is one architecture. `--mode` went with
+        # the single-assistant variant; both agents render from this call.
+        run: python scripts/provision_vapi.py --dry-run > /dev/null
 
   knowledge-base:
     name: knowledge base
