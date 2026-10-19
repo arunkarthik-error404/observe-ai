@@ -405,7 +405,7 @@ vapi/
                        (`<!-- why -->` blocks are stripped before the model)
 web/                   debug console and browser dialler
 scripts/               provisioning, org setup, diagnostics, scenario replay
-tests/                 231 tests, no credentials required
+tests/                 233 tests, no credentials required
 .github/workflows/     CI: tests, lint, agent config, knowledge base, secrets
 ```
 
@@ -416,7 +416,7 @@ python -m venv venv && venv\Scripts\activate      # Windows
 pip install -r requirements.txt
 copy .env.example .env
 
-pytest                          # 231 tests, no credentials needed
+pytest                          # 233 tests, no credentials needed
 uvicorn app.main:app --reload   # http://127.0.0.1:8000
 ```
 
