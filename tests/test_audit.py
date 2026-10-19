@@ -138,12 +138,14 @@ def test_an_account_announced_before_the_lookup_answers_is_caught():
 
 
 def test_an_account_announced_before_the_lookup_is_even_issued_is_caught():
-    """The version that only watched the gap between the call and the result
-    scored two live calls clean: both announced the account eight to ten
-    seconds before `lookup_customer` was issued at all, which put the worse
-    form of the bug outside the window."""
+    """The window is everything before the result, not the gap between the
+    call and the result — an earlier version watched only that gap and missed
+    an assertion made before the tool was issued at all.
+
+    Written without the bridging line, because a turn that carries one is not
+    attributable either way. See the bridging-line tests below."""
     findings = audit_call([
-        bot(24.8, "Let me look that up for you. I found an account with that phone number."),
+        bot(24.8, "I found an account with that phone number."),
         calls(32.2, "lookup_customer"),
         result(35.4, "lookup_customer", {"found": True}),
     ], NAMES)
@@ -185,6 +187,37 @@ def test_the_bridging_line_itself_is_not_an_outcome():
     ], NAMES)
 
     assert [f for f in findings if f["check"] == "outcome_before_result"] == []
+
+
+def test_a_turn_carrying_the_bridging_line_is_not_attributable():
+    """Vapi speaks the bridging line at dispatch and the transcriber merges it
+    into the same segment as whatever the model says next, under one
+    timestamp. Nothing in the data says which side of the result the second
+    sentence fell on, so the check has to stay quiet rather than claim it.
+
+    An earlier version reported this as a finding on six calls. The retraction
+    was worse than the silence would have been."""
+    findings = audit_call([
+        bot(21.6, "Let me look that up for you. I couldn't find an account associated "
+                  "with that number."),
+        calls(26.6, "lookup_customer"),
+        result(29.8, "lookup_customer", {"found": False}),
+    ], NAMES)
+
+    assert [f for f in findings if f["check"] == "outcome_before_result"] == []
+
+
+def test_an_outcome_in_its_own_turn_is_still_attributable():
+    """The model speaking separately from the bridging line is clean evidence:
+    that segment is its voice alone."""
+    findings = audit_call([
+        bot(21.6, "Let me look that up for you."),
+        calls(26.6, "lookup_customer"),
+        bot(27.2, "I found an account with that number."),
+        result(29.8, "lookup_customer", {"found": True}),
+    ], NAMES)
+
+    assert [f["check"] for f in findings] == ["outcome_before_result"]
 
 
 # --- fillers, figures, farewells ------------------------------------------

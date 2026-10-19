@@ -172,6 +172,35 @@ def _normalise(line: str) -> str:
 
 
 @lru_cache
+def bridging_lines() -> frozenset[str]:
+    """The lines Vapi speaks itself when a tool is dispatched.
+
+    These wreck timing attribution, and finding that out cost a retraction.
+    `lookup_customer` speaks "Let me look that up for you." at dispatch, and
+    the transcriber merges that audio into the same segment as whatever the
+    model says next — so a segment reading "Let me look that up for you. I
+    found an account." has one timestamp covering both, and nothing in the
+    data says which side of the tool result the second sentence fell on.
+
+    Only `lookup_customer` and `get_claim_status` have one. The checks that
+    matter most — a name or a verification claim before `verify_identity`
+    answered, an answer before `search_knowledge_base` did — are on tools with
+    no bridging line, so those segments are the model's voice alone and the
+    timing means what it looks like.
+    """
+    path = Path(__file__).resolve().parents[1] / "vapi" / "agents.json"
+    try:
+        tools = json.loads(path.read_text(encoding="utf-8"))["tools"]
+    except Exception:  # noqa: BLE001 - a missing config must not break a webhook
+        return frozenset()
+    return frozenset(
+        _normalise(spec["request_start"])
+        for name, spec in tools.items()
+        if not name.startswith("_") and isinstance(spec, dict) and spec.get("request_start")
+    )
+
+
+@lru_cache
 def automatic_lines() -> frozenset[str]:
     """The lines Vapi speaks on its own, which must not be audited as speech.
 
@@ -362,8 +391,16 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
         #    issued, so the model was describing a lookup it had not started.
         #    Sitting outside the window made the worse version of the bug the
         #    one the audit could not see.
+        #    Skipped entirely when the turn carries the tool's own bridging
+        #    line: that audio is Vapi's, spoken at dispatch and merged into
+        #    this segment by the transcriber, so there is no way to tell which
+        #    side of the result the model's words fell on. Reporting it anyway
+        #    would be claiming more than the data supports — which an earlier
+        #    version did, across six calls.
+        spoken_norm = _normalise(said)
+        carries_bridge = any(line and line in spoken_norm for line in bridging_lines())
         before_answer = lookup_answered_at is None or at < lookup_answered_at
-        if before_answer:
+        if before_answer and not carries_bridge:
             match = LOOKUP_OUTCOME.search(said)
             if match:
                 when = ("lookup_customer was never called"
