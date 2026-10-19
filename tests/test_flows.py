@@ -1496,3 +1496,43 @@ def test_the_knowledge_base_tells_the_agent_it_is_not_the_source():
 
     assert "already answered this from your own knowledge" in instruction
     assert "you are not the source here" in instruction
+
+
+def test_an_emergency_that_ends_the_call_is_still_labelled():
+    """A live emergency call did exactly the right thing — 911 guidance, then
+    hang up so the caller could dial out — and landed in Salesforce with no
+    outcome at all: identity was never verified, so the auth fallback had
+    nothing, and `log_interaction` never ran because the call ended first.
+    The safety path is the last thing that should be unlabelled."""
+    call_id = new_call()
+    emergency = tool(call_id, "report_emergency", description="my kitchen is on fire")
+    assert emergency["emergency"] is True
+
+    end_call(call_id, "Caller reported a fire; advised to call 911.", sentiment="negative")
+    written = repository().interactions[call_id]
+
+    assert written.outcome == "emergency_reported"
+    assert written.authenticated is False
+
+
+def test_a_verified_emergency_is_labelled_the_same_way():
+    """The emergency outranks the auth state, not the other way round."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-234-1187")
+    tool(call_id, "verify_identity", date_of_birth="1979-11-03")
+    tool(call_id, "report_emergency", description="there is a gas leak")
+
+    end_call(call_id, "Verified caller reported a gas leak.", sentiment="negative")
+    assert repository().interactions[call_id].outcome == "emergency_reported"
+
+
+def test_a_model_supplied_outcome_still_wins_over_the_fallback():
+    """The fallback is a default, not a conclusion: an agent that got as far
+    as writing the record knows more than the session does."""
+    call_id = new_call()
+    tool(call_id, "report_emergency", description="my kitchen is on fire")
+    tool(call_id, "log_interaction", summary="Fire; advised 911 and ended the call.",
+         sentiment="negative", outcome="emergency_escalated")
+
+    end_call(call_id, "Caller reported a fire.", sentiment="negative")
+    assert repository().interactions[call_id].outcome == "emergency_escalated"

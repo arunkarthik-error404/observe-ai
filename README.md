@@ -4,29 +4,34 @@ An inbound voice agent that authenticates callers, reads their claim status out
 of a CRM, answers claims questions from a knowledge base, escalates to a human
 when it should, and writes the call back to the customer's record.
 
-**Call it:** +1 775 540 3096 (inbound only)
+**Call it:** +1 984 240 2971 (inbound only)
 **Watch it:** <https://observe-claims-agent.onrender.com> — the live call console
 
-- **Voice layer:** Vapi · GPT-4o · Deepgram nova-3 · 3-agent squad
+- **Voice layer:** Vapi · GPT-4o · Deepgram nova-3 · two agents, eight tools
 - **Agent backend:** FastAPI — tools, routing policy, call state, write-back
 - **System of record:** Salesforce (`Contact`, `Case`, `Task`), with an
   interchangeable Google Sheets adapter behind the same interface
 
 ```text
      caller ──▶ Vapi (STT · LLM · TTS · telephony)
-                  │   squad: triage → claims specialist → escalation
+                  │   observe-claims ──▶ observe-escalation
                   │   tool-calls / end-of-call-report   (x-vapi-secret)
                   ▼
         FastAPI  /vapi/webhook
                   │
-        ┌─────────┼──────────────┬────────────────┬──────────────┐
-        ▼         ▼              ▼                ▼              ▼
-   SessionStore  tools/       knowledge/      repositories/   notifications/
-   (auth state,  (8 tools,    (FAQ retrieval  ├─ salesforce ◀── Integration #1 (read)
-    attempts,     gated by     + refusal      │                 Integration #2 (write)
-    timeline)     the server)  threshold)     ├─ sheets       Slack ◀── Integration #3
-                                              └─ memory  ◀── tests & offline dev
+    ┌─────────┬───┴────────┬───────────┬──────────────┬─────────────┐
+    ▼         ▼            ▼           ▼              ▼             ▼
+SessionStore tools/    knowledge/  repositories/  notifications/  audit.py
+(auth state, (8 tools, (retrieval  ├─ salesforce ◀─ Integration #1 (read)
+ attempts,    gated by  + refusal  │                Integration #2 (write)
+ timeline)    the       threshold) ├─ sheets      Slack ◀─ Integration #3
+              server)              └─ memory ◀─ tests & offline dev
 ```
+
+`audit.py` is the odd one out: it scores the agent's own speech after each
+call against the rules the prompt states, so prompt adherence is a number per
+call rather than something you check by listening. See
+[Measuring what the prompt cannot enforce](#measuring-what-the-prompt-cannot-enforce).
 
 ## The flows
 
@@ -42,15 +47,16 @@ when it should, and writes the call back to the customer's record.
 Every flow has a seeded persona behind it, and `scripts/simulate_call.py`
 replays any of them against a running server without spending voice minutes.
 
-Built on top of those flows: multi-agent orchestration (3-agent squad), a
-knowledge base with a refusal threshold, Slack as a third integration, and two
-interchangeable systems of record behind one interface, swappable with one
-environment variable.
+Built on top of those flows: multi-agent orchestration, a knowledge base with
+a refusal threshold, Slack as a third integration, two interchangeable systems
+of record behind one interface swappable with one environment variable, and a
+post-call audit that scores the agent's own speech against the rules it was
+given.
 
 ## How a call is routed
 
 The table above is what happens. This is where it is decided — in one place,
-because the logic is spread across nine tool handlers and the shape is hard to
+because the logic is spread across eight tool handlers and the shape is hard to
 see by reading them one at a time.
 
 Routing is not in the prompt. Every tool result carries an `instruction` field,
@@ -238,12 +244,70 @@ it is handed to a worker thread. Nothing the caller hears depends on it, the
 retried webhook is the backstop, and the pool is drained on shutdown so a deploy
 cannot drop a record.
 
-**Three agents, one voice.** The squad splits the job — triage authenticates,
-the specialist handles claims, escalation owns handoff — so each prompt is short
-and the authentication boundary is structural rather than a request. The caller
-never hears it: transfers carry no message, and the receiving agent is told it
-must not greet or re-introduce itself. A single-assistant build of the same
-agent is kept alongside it as a control.
+**Two agents, one voice, one handoff.** `observe-claims` greets,
+authenticates and answers; `observe-escalation` owns everything to do with
+reaching a human. The caller never hears the join: transfers carry no message,
+and the receiving agent is told it must not greet or re-introduce itself.
+
+It was three, and the call records ended that. The transfer from triage to the
+claims specialist fired 49.79s into a call, immediately after verification
+returned, with no caller turn in between — triage's whole job ended the moment
+the check passed — and it cost about eight seconds of dead air for no
+reduction in scope. The rule that came out of it, and the reason escalation
+still has its own agent:
+
+> Split where the conversation ends or hands off, never where it continues.
+
+A caller being escalated is already being handed over, so the pause lands
+where it makes sense and a true sentence covers it. A caller who has just read
+out their date of birth is mid-exchange, and nothing covers a pause there.
+`check_agent_config.py` now fails the build if the agent holding
+`verify_identity` does not also hold `get_claim_status`, so splitting at
+verification is an error rather than a judgement call.
+
+**The prompts carry their own history, and the model never sees it.**
+`<!-- why ... -->` blocks hold the live call behind each rule so nobody
+deletes a rule that looks fussy without knowing what it cost; they are
+stripped at provision time. That withholds about 7,000 characters. It is not
+cosmetic: every paragraph of justification dilutes the rule it justifies, and
+two calls broke four rules that were present in full, with worked examples, in
+the prompt they were running.
+
+## Measuring what the prompt cannot enforce
+
+Most rules in this README are enforced somewhere a prompt cannot reach them —
+the auth gate, the spoken-number formatting, the refusal threshold. The ones
+that can only ever be prompt rules are different: nothing about a broken one
+looks broken. The call sounds fine, no test fails, and the only evidence is in
+a transcript nobody reads.
+
+So `app/audit.py` reads it. After each call the webhook scores the agent's own
+speech against nine rules the prompt states, and writes one `call_audit` line
+with a count per check and the quote that triggered it.
+
+| Check | What it catches |
+|---|---|
+| `name_before_verification` | the caller named before `verify_identity` returned it |
+| `outcome_before_result` | the account confirmed or denied before the lookup answered |
+| `fact_before_retrieval` | a knowledge-base answer given before the knowledge base gave it |
+| `filler_before_emergency` | a filler in front of the 911 script |
+| `emergency_call_not_ended` | the line still open 30s after the emergency script |
+| `filler` | the phrases the prompt lists as wrong, verbatim |
+| `figures_for_a_voice` | digits spoken where the tools sent words |
+| `stacked_questions` | two questions in one turn |
+| `turn_too_long` | over 400 characters, ~25s of uninterrupted speech |
+
+Two things make it worth having rather than reassuring. It compares what was
+said against what the tool *later returned*, so a claim made early is provable
+rather than suspected. And it is deliberately silent where the data cannot
+support a finding: `lookup_customer` and `get_claim_status` speak a bridging
+line that Vapi utters at dispatch and the transcriber merges into the agent's
+own segment under one timestamp, so on those two tools nothing establishes
+which side of the result a sentence fell on — and the check says nothing
+rather than guessing.
+
+That turns "did it follow the prompt?" from a question you answer by listening
+into one you answer with a number per call.
 
 ## Integrations
 
@@ -310,6 +374,7 @@ app/
   seed.py              the demo dataset, one persona per scenario
   notifications.py     Integration #3: escalation to Slack
   redaction.py         PII masking for the log stream
+  audit.py             post-call scoring of the agent's own speech
   api/
     webhook.py         Vapi's one endpoint, routed by message type
     security.py        shared-secret and URL-token authentication
@@ -333,9 +398,10 @@ app/
 vapi/
   agents.json          the entire agent configuration: tools, assistants, squad
   prompts/             shared rules + one prompt per agent
+                       (`<!-- why -->` blocks are stripped before the model)
 web/                   debug console and browser dialler
 scripts/               provisioning, org setup, diagnostics, scenario replay
-tests/                 110 tests, no credentials required
+tests/                 231 tests, no credentials required
 .github/workflows/     CI: tests, lint, agent config, knowledge base, secrets
 ```
 
@@ -346,7 +412,7 @@ python -m venv venv && venv\Scripts\activate      # Windows
 pip install -r requirements.txt
 copy .env.example .env
 
-pytest                          # 110 tests, no credentials needed
+pytest                          # 231 tests, no credentials needed
 uvicorn app.main:app --reload   # http://127.0.0.1:8000
 ```
 
@@ -355,8 +421,8 @@ personas — the whole agent, every flow, no org and no spreadsheet.
 
 ### Checks
 
-CI (`.github/workflows/ci.yml`) runs all four on every push, on Python 3.11,
-3.12 and 3.13, with **no credentials configured anywhere**. That is possible
+CI (`.github/workflows/ci.yml`) runs all of these on every push, on Python
+3.11, 3.12 and 3.13, with **no credentials configured anywhere**. That is possible
 because the repository pattern lets the suite run on the in-memory backend and
 the Salesforce adapter is tested through a mock HTTP transport — a property of
 the design worth keeping, not a convenience.
@@ -366,14 +432,19 @@ pytest                                # server behaviour: tools, flows, adapters
 ruff check .                          # lint
 python scripts/check_agent_config.py  # agent config: tool parity, routing, prompts
 python scripts/check_kb.py            # knowledge base: recall and refusal
+python scripts/check_sentiment.py     # sentiment resolution metrics
+python scripts/provision_vapi.py --dry-run   # every payload renders
 ```
 
 The last two exist because this project breaks in ways `pytest` cannot see.
 `agents.json` can offer the model a tool the server does not implement, or route
 a squad transfer to an assistant that is not in the squad — provisioning accepts
-both, and you find out on a live call. Two of those checks are regression guards
-for bugs that happened exactly that way: an agent announcing an internal
-handoff, and two agents both owning escalation so the caller heard it twice.
+both, and you find out on a live call. Several are regression guards for bugs that
+happened exactly that way: an agent announcing an internal handoff, two agents
+both owning escalation so the caller heard it twice, a prompt that contradicted
+the tool it was running, a demo persona's name used as a worked example, and a
+`<!-- why -->` block whose own text closed it early and leaked into the live
+prompt.
 
 ### Connect a system of record
 
@@ -431,9 +502,12 @@ Voice agents cannot be stepped through in a debugger, so the loop is:
    the knowledge base, which the tests cannot reach.
 3. `/debug` — during a live call: auth state, failed attempts, every tool call
    with arguments, result, latency, and any safety override.
-4. JSON logs correlated by `call_id` — `grep '"call_id":"<id>"'` reconstructs a
+4. `call_audit` in the logs — after each call, which spoken rules held and
+   which did not, with the quote behind each. The one check that works on
+   calls nobody is watching.
+5. JSON logs correlated by `call_id` — `grep '"call_id":"<id>"'` reconstructs a
    call end to end.
-5. Vapi's own transcript and recording for anything that is actually an
+6. Vapi's own transcript and recording for anything that is actually an
    audio-layer problem (endpointing, barge-in, a misheard digit).
 
 Most of the fixes in this repo came from step 3 catching something the tests

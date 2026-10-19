@@ -128,7 +128,18 @@ def _concluded_outcome(session: Any) -> str:
     blank-subject Task on the activity timeline for any call that produced no
     outcome at all, which is worse to look at than a vague one.
     """
-    if session is None or session.auth_outcome == "pending":
+    if session is None:
+        return ""
+    # An emergency outranks the auth state, and is the one case where the call
+    # ending early is correct behaviour rather than a dropped thread. A live
+    # call did exactly what it should — 911 guidance, then hang up, so the
+    # caller could dial out — and because identity was never verified and
+    # `log_interaction` never ran, the record landed with no outcome at all.
+    # The safety path is the last thing that should be unlabelled on a
+    # reviewer's timeline.
+    if getattr(session, "emergency", False):
+        return "emergency_reported"
+    if session.auth_outcome == "pending":
         return ""
     return str(session.auth_outcome)
 
