@@ -260,6 +260,61 @@ def test_the_signoff_is_exempt_even_when_the_transcription_mangles_it():
     assert findings == []
 
 
+# --- the knowledge base, answered before it answered ----------------------
+OFFICE_HOURS = (
+    "Our claims support team is available Monday through Friday, 8am to 6pm Pacific Time, "
+    "and Saturday 9am to 1pm Pacific. We are closed Sundays and on federal holidays. This "
+    "automated line can check claim status any time, day or night."
+)
+
+
+def test_an_answer_given_before_the_knowledge_base_returned_it_is_caught():
+    """Call 01a1527b. The agent recited the office hours at 44.35s;
+    `search_knowledge_base` was not issued until 51.52s and answered at
+    53.10s. It was right, which is the problem — a lucky answer and a sourced
+    one sound identical, and only one of them stays right when the hours
+    change."""
+    findings = audit_call([
+        caller(41.5, "What are your office hours?"),
+        bot(44.3, "This will just take a sec. Our claims support team is available "
+                  "Monday through Friday, 8 am to 6 pm Pacific Time."),
+        result(53.1, "search_knowledge_base", {"found": True, "answer": OFFICE_HOURS}),
+    ], NAMES)
+
+    early = [f for f in findings if f["check"] == "fact_before_retrieval"]
+    assert len(early) == 1
+    assert early[0]["at_seconds"] == 44.3
+
+
+def test_the_same_answer_after_the_tool_returned_it_is_fine():
+    findings = audit_call([
+        caller(41.5, "What are your office hours?"),
+        result(53.1, "search_knowledge_base", {"found": True, "answer": OFFICE_HOURS}),
+        bot(53.3, "Our claims support team is available Monday through Friday, 8 am to "
+                  "6 pm Pacific Time, and Saturday 9 am to 1 pm Pacific."),
+    ], NAMES)
+
+    assert [f for f in findings if f["check"] == "fact_before_retrieval"] == []
+
+
+def test_a_bridging_line_before_the_knowledge_base_is_not_an_answer():
+    """"Let me look that up" shares almost nothing with the answer. Flagging
+    it would make the check fire on every knowledge-base call there is."""
+    findings = audit_call([
+        bot(44.3, "Let me look that up for you."),
+        result(53.1, "search_knowledge_base", {"found": True, "answer": OFFICE_HOURS}),
+    ], NAMES)
+
+    assert [f for f in findings if f["check"] == "fact_before_retrieval"] == []
+
+
+def test_a_numeral_filler_is_caught():
+    """The transcriber runs with numerals on, so "one moment" arrives as
+    "1 moment" and slipped the pattern on a live call."""
+    findings = audit_call([bot(68.3, "1 moment. Let me check that.")], NAMES)
+    assert any(f["check"] == "filler" for f in findings)
+
+
 # --- the emergency path, and turn shape -----------------------------------
 def test_a_filler_in_front_of_the_911_script_is_its_own_finding():
     """`report_emergency` returns an instruction naming this exact failure.

@@ -50,8 +50,11 @@ SPEECH_ROLES = {"bot", "assistant"}
 
 # From the prompt's own "Wrong:" list. Matched on the agent's words only, so a
 # caller saying "hold on" is not a finding.
+# `1` as well as `one`: the transcriber runs with numerals on, so "one moment"
+# comes back as "1 moment" and slipped the pattern on a live call.
 FILLERS = re.compile(
-    r"\b(?:just a (?:sec|second|moment)|hold on(?: a (?:sec|second))?|one moment"
+    r"\b(?:just a (?:sec|second|moment)|hold on(?: a (?:sec|second))?"
+    r"|(?:one|1) (?:moment|sec|second)"
     r"|give me a (?:sec|second|moment)|bear with me|this will (?:just )?take a sec)\b",
     re.IGNORECASE,
 )
@@ -242,6 +245,7 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
     emergency_at: float | None = None
     end_call_at: float | None = None
     last_speech_at: float = 0.0
+    kb_answers: list[tuple[float, str]] = []
 
     for entry in entries:
         role = entry.get("role")
@@ -260,6 +264,10 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
                 lookup_answered_at = _at(entry)
             elif name == "report_emergency" and emergency_at is None:
                 emergency_at = _at(entry)
+            elif name == "search_knowledge_base":
+                answer = _result_of(entry).get("answer") or ""
+                if answer:
+                    kb_answers.append((_at(entry), str(answer)))
         elif role in SPEECH_ROLES and (entry.get("message") or "").strip():
             last_speech_at = max(last_speech_at, _at(entry))
 
@@ -375,7 +383,41 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
                 "goodbye_before_signoff", entry,
                 f"said {match.group(0)!r}; endCallMessage speaks the sign-off", said))
 
-    # 9. The call outliving the emergency that should have ended it.
+    # 9. A knowledge-base fact spoken before the knowledge base supplied it.
+    #
+    #    The strongest version of the same defect. "Never state a fact from
+    #    your own knowledge, even one you are sure of" is the rule the whole
+    #    retrieval design rests on — the refusal threshold, the ambiguity
+    #    branch and the provenance field all assume the agent only says what
+    #    `search_knowledge_base` returned. On a live call the agent recited
+    #    the office hours nine seconds before the tool was even issued, and
+    #    they were right, which is exactly the problem: nothing about a lucky
+    #    answer looks different from a sourced one.
+    #
+    #    Proven rather than guessed at: what the agent said is compared with
+    #    the text the tool went on to return. A high overlap, spoken first,
+    #    cannot have come from the tool.
+    for answer_at, answer in kb_answers:
+        content = {w for w in re.findall(r"[a-z]{4,}", answer.lower())}
+        if len(content) < 8:
+            continue
+        for entry in entries:
+            if entry.get("role") not in SPEECH_ROLES:
+                continue
+            said = (entry.get("message") or "").strip()
+            at = _at(entry)
+            if not said or at >= answer_at or _is_automatic(said):
+                continue
+            spoken = {w for w in re.findall(r"[a-z]{4,}", said.lower())}
+            shared = content & spoken
+            if len(shared) >= 5 and len(shared) / len(content) >= 0.35:
+                findings.append(_finding(
+                    "fact_before_retrieval", entry,
+                    f"said {len(shared)} of the {len(content)} content words the knowledge "
+                    f"base returned at {answer_at}s, before it returned them", said))
+                break
+
+    # 10. The call outliving the emergency that should have ended it.
     #
     #    A caller cannot dial emergency services while they are still
     #    connected, so `report_emergency` tells the model to say the script
