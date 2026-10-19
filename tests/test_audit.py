@@ -191,6 +191,35 @@ def test_a_farewell_from_the_model_is_caught():
     assert [f["check"] for f in findings] == ["goodbye_before_signoff"]
 
 
+def test_a_farewell_after_the_hangup_is_the_configured_one():
+    """Once `endCall` is issued the sign-off is playing, and the transcriber
+    merges it into whatever segment the agent was mid-way through. On the
+    emergency call that produced "...I'll let you go now so you can call them.
+    Thanks for calling Observe Insurance. Take care." as one segment — the
+    second half of which the model did not write."""
+    findings = audit_call([
+        {"role": "tool_calls", "secondsFromStart": 70.6,
+         "toolCalls": [{"function": {"name": "endCall", "arguments": "{}"}}]},
+        bot(77.8, "and emergency services can help you much more quickly than I can. "
+                  "I'll let you go now so you can call them. Thanks for calling "
+                  "Observe Insurance. Take care."),
+    ], NAMES)
+
+    assert [f for f in findings if f["check"] == "goodbye_before_signoff"] == []
+
+
+def test_a_farewell_before_the_hangup_is_the_models_own():
+    """The sign-off cannot have played yet, so this one is the model's. Call
+    01a15273 said it at 81.3s and only called `log_interaction` at 83.2s."""
+    findings = audit_call([
+        bot(81.3, "This will just take a sec. Thanks for calling Observe Insurance."),
+        {"role": "tool_calls", "secondsFromStart": 85.4,
+         "toolCalls": [{"function": {"name": "endCall", "arguments": "{}"}}]},
+    ], NAMES)
+
+    assert any(f["check"] == "goodbye_before_signoff" for f in findings)
+
+
 def test_the_configured_greeting_and_signoff_are_not_audited():
     """Both arrive in the transcript as ordinary agent turns. The greeting
     contains "Thanks for calling" and the sign-off is a farewell, so without
@@ -202,6 +231,21 @@ def test_the_configured_greeting_and_signoff_are_not_audited():
     ], NAMES)
 
     assert findings == []
+
+
+def test_a_turn_that_merely_contains_the_signoff_is_still_audited():
+    """Call 01a15273 closed with "This will just take a sec. Thanks for calling
+    Observe Insurance." Measured as recall against the configured line that is
+    6 of 7 words, so the whole turn was exempted and both the forbidden filler
+    and the model's own farewell went unreported. Similarity has to run both
+    ways: this turn carries the sign-off plus something it should not."""
+    findings = audit_call([
+        bot(81.3, "This will just take a sec. Thanks for calling Observe Insurance."),
+    ], NAMES)
+    kinds = {f["check"] for f in findings}
+
+    assert "filler" in kinds
+    assert "goodbye_before_signoff" in kinds
 
 
 def test_the_signoff_is_exempt_even_when_the_transcription_mangles_it():

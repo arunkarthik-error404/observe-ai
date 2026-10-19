@@ -173,11 +173,20 @@ def _is_automatic(said: str) -> bool:
     if not spoken:
         return False
     for line in automatic_lines():
-        if spoken == line or spoken in line or line in spoken:
+        # Equal, or the transcript caught only part of it.
+        if spoken == line or spoken in line:
             return True
         # Transcription drift: same words, a few of them mangled or dropped.
+        #
+        # Similarity both ways, not recall against the configured line. A
+        # one-sided test asked only "does this contain the sign-off's words",
+        # so a turn that contained the sign-off AND something else scored 6/7
+        # and was waved through whole: a live call closed with "This will just
+        # take a sec. Thanks for calling Observe Insurance." and the audit
+        # reported neither the forbidden filler nor the model's own farewell.
         words, expected = set(spoken.split()), set(line.split())
-        if expected and len(words & expected) / len(expected) >= 0.7:
+        union = words | expected
+        if union and len(words & expected) / len(union) >= 0.7:
             return True
     return False
 
@@ -231,6 +240,7 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
     lookup_issued_at: float | None = None
     lookup_answered_at: float | None = None
     emergency_at: float | None = None
+    end_call_at: float | None = None
     last_speech_at: float = 0.0
 
     for entry in entries:
@@ -240,6 +250,8 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
                 name = (call.get("function") or {}).get("name") or call.get("name")
                 if name == "lookup_customer" and lookup_issued_at is None:
                     lookup_issued_at = _at(entry)
+                elif name == "endCall" and end_call_at is None:
+                    end_call_at = _at(entry)
         elif role == "tool_call_result":
             name = entry.get("name") or ""
             if name == "verify_identity" and verified_at is None and _result_of(entry).get("verified"):
@@ -349,7 +361,15 @@ def audit_call(entries: list[dict[str, Any]], verified_names: set[str]) -> list[
                 f"{round(len(said) / 18)}s of speech", said))
 
         # 8. A farewell in front of the one that plays automatically.
-        match = GOODBYE.search(said)
+        #
+        #    Only before `endCall` is issued. After it, the configured sign-off
+        #    is playing, and the transcriber merges it into whatever segment
+        #    the agent was already in — so a farewell found there is usually
+        #    the configured one being read back, not the model writing its own.
+        #    Before `endCall` the sign-off cannot have played yet, so a
+        #    farewell is the model's by construction.
+        after_hangup = end_call_at is not None and at > end_call_at
+        match = None if after_hangup else GOODBYE.search(said)
         if match:
             findings.append(_finding(
                 "goodbye_before_signoff", entry,
