@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     # locally, so forgetting to set it fails closed.
     debug_token: str = ""
 
+    # Lets anyone READ the console in production — still masked. Separate from
+    # `debug_token`, which is the only thing that lifts the mask, so turning
+    # this on cannot expose a phone number or a date of birth. Set on the demo
+    # deployment because the README links to it and a reviewer following that
+    # link should reach the console rather than a 401. Default off: a system
+    # carrying real callers should not advertise that a call is in progress.
+    console_public: bool = False
+
     # --- behaviour --------------------------------------------------------
     max_auth_attempts: int = 3
     # Guesses allowed against one phone number across every call, not just

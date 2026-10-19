@@ -57,6 +57,10 @@ services:
         sync: false
       - key: VAPI_SQUAD_ID
         sync: false
+      # Opens the console for reading on the demo deployment. The PII mask is a
+      # separate control and stays on regardless.
+      - key: CONSOLE_PUBLIC
+        value: "true"
 
       # --- behaviour ------------------------------------------------------
       - key: MAX_AUTH_ATTEMPTS

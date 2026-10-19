@@ -5,7 +5,11 @@ of a CRM, answers claims questions from a knowledge base, escalates to a human
 when it should, and writes the call back to the customer's record.
 
 **Call it:** +1 984 240 2971 (inbound only)
-**Watch it:** <https://observe-claims-agent.onrender.com> — the live call console
+**Watch it:** <https://observe-claims-agent.onrender.com/debug> — the live call
+console: auth state, every tool call with arguments and latency, and the
+post-call record being written. Open to read, with every name, phone number
+and date of birth masked; lifting the mask needs a token. The two are separate
+controls on purpose — see `app/api/security.py`.
 
 - **Voice layer:** Vapi · GPT-4o · Deepgram nova-3 · two agents, eight tools
 - **Agent backend:** FastAPI — tools, routing policy, call state, write-back

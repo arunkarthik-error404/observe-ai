@@ -314,3 +314,58 @@ def test_the_debug_api_stays_open_locally(monkeypatch):
         assert TestClient(app).get("/debug/calls").status_code == 200
     finally:
         config.settings.cache_clear()
+
+
+def test_a_public_console_is_readable_but_still_masked(monkeypatch):
+    """The deployed demo is linked from the README, and a reviewer following
+    that link should reach the console rather than a 401. `CONSOLE_PUBLIC`
+    lifts the access gate only — the mask is a separate control and stays on,
+    so opening the console cannot expose a phone number or a date of birth."""
+    from fastapi.testclient import TestClient
+
+    from app import config
+    from app.main import app
+    from app.session import store
+
+    config.settings.cache_clear()
+    monkeypatch.setenv("REQUIRE_SECRET", "true")
+    monkeypatch.setenv("VAPI_SECRET", "shh")
+    monkeypatch.setenv("DEBUG_TOKEN", "letmein")
+    monkeypatch.setenv("CONSOLE_PUBLIC", "true")
+    try:
+        client = TestClient(app)
+        store.reset()
+        session = store.get("call_public")
+        session.claimed_phone = "5554184492"
+
+        anon = client.get("/debug/calls")
+        assert anon.status_code == 200, "a public console must not 401"
+        body = anon.json()
+        assert body["redacted"] is True
+        assert "5554184492" not in json.dumps(body)
+
+        # The token is still the only thing that lifts the mask.
+        named = client.get("/debug/calls", params={"t": "letmein"}).json()
+        assert named["redacted"] is False
+        assert "5554184492" in json.dumps(named)
+    finally:
+        store.reset()
+        config.settings.cache_clear()
+
+
+def test_the_console_stays_closed_unless_it_is_opened_deliberately(monkeypatch):
+    """Default off. A system carrying real callers should not advertise that a
+    call is in progress just because nobody set a variable."""
+    from fastapi.testclient import TestClient
+
+    from app import config
+    from app.main import app
+
+    config.settings.cache_clear()
+    monkeypatch.setenv("REQUIRE_SECRET", "true")
+    monkeypatch.setenv("VAPI_SECRET", "shh")
+    monkeypatch.delenv("CONSOLE_PUBLIC", raising=False)
+    try:
+        assert TestClient(app).get("/debug/calls").status_code == 401
+    finally:
+        config.settings.cache_clear()

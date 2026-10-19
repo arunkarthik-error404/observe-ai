@@ -105,7 +105,12 @@ async function poll() {
     // Say which it is. A console quietly showing asterisks looks like a bug.
     const mEl = document.getElementById("masked");
     if (mEl) {
-      mEl.textContent = calls.redacted ? "PII masked" : "PII visible";
+      // Say which it is, and say it as a property rather than a limitation.
+      // A visitor following the README link lands here masked, and a console
+      // quietly showing asterisks looks like a bug rather than a control.
+      mEl.textContent = calls.redacted
+        ? "PII masked — names, numbers and dates of birth never leave the server"
+        : "PII visible";
       mEl.className = "chip " + (calls.redacted ? "" : "bad");
     }
     document.getElementById("backend").textContent = `backend: ${health.backend}`;
@@ -120,8 +125,12 @@ async function poll() {
     hEl.className = "chip bad";
     if (locked) {
       document.getElementById("detail").innerHTML =
-        '<div class="empty">This console needs a token in production.<br>' +
-        'Open it as <code>/debug?t=&lt;DEBUG_TOKEN&gt;</code>.</div>';
+        '<div class="empty">The call timeline is closed on this deployment.<br><br>' +
+        'There are two separate controls: this one decides who may read the ' +
+        'console at all, and a second one masks every name, phone number and ' +
+        'date of birth. Set <code>CONSOLE_PUBLIC=true</code> to open the ' +
+        'masked view to anyone; <code>/debug?t=&lt;DEBUG_TOKEN&gt;</code> is ' +
+        'the only thing that lifts the mask.</div>';
     }
   }
 }

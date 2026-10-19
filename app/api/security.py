@@ -55,9 +55,18 @@ def require_console_access(token: str | None, header: str | None, request: Reque
     Either credential opens it, because anyone holding the webhook secret can
     already write records through it, so withholding read access from them
     protects nothing.
+
+    `CONSOLE_PUBLIC=true` opens it to anyone, still masked — the two controls
+    are separate and only this one is lifted. It exists because the deployed
+    demo is linked from the README, and a reviewer who follows that link
+    should see the thing it describes rather than a 401. What they get is the
+    tool timeline, auth state, latency and claim ids with every phone number,
+    name and date of birth masked; `DEBUG_TOKEN` is still the only way to lift
+    the mask. Default off, so this is a decision a deployment makes out loud
+    rather than something that quietly leaks on every install.
     """
     cfg = settings()
-    if not cfg.require_secret:
+    if not cfg.require_secret or cfg.console_public:
         return
     for expected in (cfg.debug_token.strip(), cfg.vapi_secret.strip()):
         if not expected:
