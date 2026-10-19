@@ -67,14 +67,17 @@ flowchart TD
     B -->|"end-of-call-report"| REC["Write interaction record — upsert on call_id"]
     B -->|"tool-calls"| DISPATCH["dispatch"]
 
-    DISPATCH --> SCAN{"Emergency regex matches any argument?"}
-    SCAN -->|"yes"| EMG["safety_override rides back on whatever<br/>result was produced — 911 script spoken first"]
-    SCAN -->|"no"| GATE{"Tool gated by requires_auth?"}
-
+    DISPATCH --> GATE{"Tool gated by requires_auth?"}
     GATE -->|"no — the other seven"| RUN["Run handler"]
     GATE -->|"yes — get_claim_status"| AUTH{"session.authenticated?<br/>read from the server, never from the model"}
     AUTH -->|"no"| DENY["not_authenticated —<br/>send the model back to verify"]
     AUTH -->|"yes"| RUN
+
+    RUN --> SCAN{"Emergency regex matches<br/>any argument of this call?"}
+    DENY --> SCAN
+    SCAN -->|"yes"| EMG["safety_override attached to whatever<br/>result was produced — 911 script spoken first"]
+    SCAN -->|"no"| OUT["Result returned to the model"]
+    EMG --> OUT
 
     RUN --> VER{"verify_identity"}
     RUN --> KB{"search_knowledge_base"}
@@ -104,12 +107,16 @@ logic worth drawing are shown.
 
 Four things in that diagram are deliberate and easy to miss:
 
-- **The emergency scan runs on every tool call**, not just `report_emergency`.
-  It reads the raw arguments, so a crisis mentioned while asking about a claim
-  still triggers the script even if the model routed it to the wrong tool.
+- **The emergency scan runs on every tool call**, not just `report_emergency`,
+  and it runs *after* the handler rather than instead of it. It reads the raw
+  arguments and attaches the 911 script to whatever result came back, so a
+  crisis mentioned while asking about a claim is caught even when the model
+  routed the turn to the wrong tool — and the caller still gets a sensible
+  answer to what they actually asked.
 - **The auth gate reads the session, not the transcript.** It is a decorator
-  (`requires_auth`) on exactly two handlers, so the security boundary is one
-  line above each one rather than a check every handler must remember.
+  (`requires_auth`) on the one handler that reads claim data, so the security
+  boundary is a single line above it rather than a check every handler has to
+  remember.
 - **The knowledge base has four outcomes, not two.** "Ambiguous" exists so the
   agent asks which of two topics the caller meant instead of presenting a coin
   toss as an answer.
