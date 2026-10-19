@@ -26,6 +26,11 @@ def normalize_dob(raw: str | None) -> str:
     value = (raw or "").strip()
     if not value:
         return ""
+    # The tool schema tells the model to pass the date "as the caller said
+    # it," which naturally comes back as "April 12th, 1988." None of the
+    # formats below parse a trailing ordinal suffix, so a correct date of
+    # birth silently failed to match a live caller's own record.
+    value = re.sub(r"(?<=\d)(st|nd|rd|th)\b", "", value, flags=re.IGNORECASE)
     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%d/%m/%Y", "%B %d %Y",
                 "%B %d, %Y", "%b %d %Y", "%b %d, %Y", "%m/%d/%y"):
         try:

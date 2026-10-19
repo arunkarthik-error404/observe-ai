@@ -88,6 +88,17 @@ def test_happy_path_in_review_claim():
     assert written.timestamp == "2026-10-15T10:05:00Z"
 
 
+def test_dob_with_an_ordinal_suffix_still_verifies():
+    """The tool schema tells the model to pass the date "as the caller said
+    it," which comes back as "April 12th, 1988" far more often than an ISO
+    string. A live call locked out a caller who gave the correct date of
+    birth because this case silently fell through to a string mismatch."""
+    call_id = new_call()
+    tool(call_id, "lookup_customer", phone_number="555-361-2234")
+    verified = tool(call_id, "verify_identity", date_of_birth="April 12th, 1988")
+    assert verified["verified"] is True
+
+
 def test_documents_required_branch():
     call_id = new_call()
     tool(call_id, "lookup_customer", phone_number="5553612234")
